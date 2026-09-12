@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#080808">
+
+  <title>El Máster | Reservas</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      background: #080808;
+      color: #ffffff;
+      line-height: 1.5;
+    }
+
+    header {
+      min-height: 70vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 40px 20px;
+      background: radial-gradient(circle at top, #292929 0%, #080808 60%);
+    }
+
+    .hero {
+      width: 100%;
+      max-width: 700px;
+    }
+
+    .logo {
+      color: #d0aa32;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 5px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      font-size: clamp(50px, 13vw, 90px);
+      line-height: 1;
+      margin-bottom: 18px;
+    }
+
+    .subtitle {
+      color: #aaaaaa;
+      font-size: 18px;
+      margin-bottom: 30px;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 16px 25px;
+      border: none;
+      border-radius: 12px;
+      background: #d0aa32;
+      color: #080808;
+      font-size: 16px;
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    main {
+      max-width: 760px;
+      margin: auto;
+      padding: 50px 18px 100px;
+    }
+
+    .section-title {
+      font-size: 30px;
+      margin-bottom: 8px;
+    }
+
+    .section-description {
+      color: #999999;
+      margin-bottom: 25px;
+    }
+
+    .services {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 55px;
+    }
+
+    .service {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      padding: 20px;
+      background: #111111;
+      border: 1px solid #292929;
+      border-radius: 16px;
+    }
+
+    .service h3 {
+      font-size: 18px;
+    }
+
+    .service small {
+      color: #888888;
+    }
+
+    .price {
+      color: #d6b544;
+      font-size: 20px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .booking {
+      padding: 25px;
+      background: #111111;
+      border: 1px solid #292929;
+      border-radius: 20px;
+    }
+
+    label {
+      display: block;
+      margin: 18px 0 7px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    input,
+    select {
+      width: 100%;
+      padding: 15px;
+      border: 1px solid #333333;
+      border-radius: 10px;
+      background: #191919;
+      color: #ffffff;
+      font-size: 16px;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: #d0aa32;
+    }
+
+    #horarios {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 9px;
+      margin-top: 10px;
+    }
+
+    .hora {
+      padding: 12px 5px;
+      border: 1px solid #333333;
+      border-radius: 9px;
+      background: #191919;
+      color: #ffffff;
+      cursor: pointer;
+    }
+
+    .hora.active {
+      background: #d0aa32;
+      border-color: #d0aa32;
+      color: #080808;
+      font-weight: 800;
+    }
+
+    .hora:disabled {
+      opacity: 0.25;
+      cursor: not-allowed;
+    }
+
+    #reservar {
+      width: 100%;
+      margin-top: 25px;
+    }
+
+    .info {
+      margin-top: 45px;
+      text-align: center;
+      color: #999999;
+    }
+
+    .info strong {
+      color: #ffffff;
+    }
+
+    footer {
+      padding: 35px 20px;
+      border-top: 1px solid #222222;
+      text-align: center;
+      color: #777777;
+    }
+
+    @media (max-width: 500px) {
+      #horarios {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .booking {
+        padding: 18px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <div class="hero">
+    <div class="logo">BARBER STUDIO</div>
+
+    <h1>EL MÁSTER</h1>
+
+    <p class="subtitle">
+      Tu estilo. Tu momento. Reserva tu cita sin esperar.
+    </p>
+
+    <a href="#reservas" class="btn">
+      RESERVAR AHORA
+    </a>
+  </div>
+</header>
+
+<main>
+
+  <h2 class="section-title">Servicios</h2>
+
+  <p class="section-description">
+    Selecciona el servicio que necesitas.
+  </p>
+
+  <div class="services">
+
+    <div class="service">
+      <div>
+        <h3>✂️ Corte de cabello</h3>
+        <small>40 minutos</small>
+      </div>
+
+      <div class="price">
+        $5.00
+      </div>
+    </div>
+
+    <div class="service">
+      <div>
+        <h3>🧔 Barba</h3>
+        <small>20 minutos</small>
+      </div>
+
+      <div class="price">
+        $2.00
+      </div>
+    </div>
+
+    <div class="service">
+      <div>
+        <h3>⚡ Diseños</h3>
+        <small>15 minutos</small>
+      </div>
+
+      <div class="price">
+        $1.50
+      </div>
+    </div>
+
+  </div>
+
+  <section id="reservas" class="booking">
+
+    <h2 class="section-title">
+      Reserva tu cita
+    </h2>
+
+    <p class="section-description">
+      Barbero: <strong>Máster</strong>
+    </p>
+
+    <label for="servicio">
+      Servicio
+    </label>
+
+    <select id="servicio">
+      <option value="">
+        Selecciona un servicio
+      </option>
+
+      <option value="corte">
+        Corte de cabello — $5.00
+      </option>
+
+      <option value="barba">
+        Barba — $2.00
+      </option>
+
+      <option value="diseno">
+        Diseño — $1.50
+      </option>
+    </select>
+
+    <label for="fecha">
+      Fecha
+    </label>
+
+    <input
+      type="date"
+      id="fecha"
+    >
+
+    <label>
+      Horarios disponibles
+    </label>
+
+    <div id="horarios">
+      <p style="color:#777; grid-column:1/-1;">
+        Selecciona primero una fecha.
+      </p>
+    </div>
+
+    <label for="nombre">
+      Tu nombre
+    </label>
+
+    <input
+      type="text"
+      id="nombre"
+      placeholder="Ej. David"
+      autocomplete="name"
+    >
+
+    <label for="telefono">
+      WhatsApp
+    </label>
+
+    <input
+      type="tel"
+      id="telefono"
+      placeholder="Ej. 0991234567"
+      autocomplete="tel"
+    >
+
+    <button
+      type="button"
+      id="reservar"
+      class="btn"
+    >
+      CONFIRMAR RESERVA
+    </button>
+
+  </section>
+
+  <div class="info">
+    <p>
+      <strong>Horario de atención</strong>
+    </p>
+
+    <p>
+      Lunes a sábado
+    </p>
+
+    <p>
+      8:00 a. m. – 7:00 p. m.
+    </p>
+
+    <p>
+      Descanso: 12:00 p. m. – 1:30 p. m.
+    </p>
+  </div>
+
+</main>
+
+<footer>
+  © El Máster Barber Studio
+</footer>
+
+<script>
+  const fecha = document.getElementById("fecha");
+  const horarios = document.getElementById("horarios");
+  const botonReservar = document.getElementById("reservar");
+
+  let horaSeleccionada = "";
+
+  const hoy = new Date();
+
+  const yyyy = hoy.getFullYear();
+
+  const mm = String(
+    hoy.getMonth() + 1
+  ).padStart(2, "0");
+
+  const dd = String(
+    hoy.getDate()
+  ).padStart(2, "0");
+
+  fecha.min = `${yyyy}-${mm}-${dd}`;
+
+  fecha.addEventListener(
+    "change",
+    cargarHorarios
+  );
+
+  async function cargarHorarios() {
+
+    horaSeleccionada = "";
+
+    if (!fecha.value) {
+      return;
+    }
+
+    const dia = new Date(
+      fecha.value + "T12:00:00"
+    ).getDay();
+
+    if (dia === 0) {
+
+      horarios.innerHTML =
+        '<p style="color:#aaa;grid-column:1/-1;">Los domingos no atendemos.</p>';
+
+      return;
+    }
+
+    horarios.innerHTML =
+      '<p style="color:#777;grid-column:1/-1;">Consultando horarios...</p>';
+
+    try {
+
+      const respuesta = await fetch(
+        `/api/disponibilidad?fecha=${encodeURIComponent(fecha.value)}`
+      );
+
+      if (!respuesta.ok) {
+        throw new Error(
+          "No se pudieron consultar los horarios."
+        );
+      }
+
+      const datos =
+        await respuesta.json();
+
+      mostrarHorarios(
+        datos.horarios || datos
+      );
+
+    } catch (error) {
+
+      horarios.innerHTML =
+        '<p style="color:#aaa;grid-column:1/-1;">No pudimos consultar los horarios. Intenta nuevamente.</p>';
+
+    }
+  }
+
+  function mostrarHorarios(lista) {
+
+    horarios.innerHTML = "";
+
+    if (
+      !Array.isArray(lista) ||
+      lista.length === 0
+    ) {
+
+      horarios.innerHTML =
+        '<p style="color:#aaa;grid-column:1/-1;">No quedan horarios disponibles para este día.</p>';
+
+      return;
+    }
+
+    lista.forEach(item => {
+
+      const hora =
+        typeof item === "string"
+          ? item
+          : item.hora;
+
+      const disponible =
+        typeof item === "string"
+          ? true
+          : item.disponible !== false;
+
+      const boton =
+        document.createElement("button");
+
+      boton.type = "button";
+      boton.className = "hora";
+      boton.textContent = hora;
+      boton.disabled = !disponible;
+
+      boton.addEventListener(
+        "click",
+        () => {
+
+          document
+            .querySelectorAll(".hora")
+            .forEach(b => {
+              b.classList.remove("active");
+            });
+
+          boton.classList.add("active");
+
+          horaSeleccionada = hora;
+        }
+      );
+
+      horarios.appendChild(boton);
+    });
+  }
+
+  botonReservar.addEventListener(
+    "click",
+    async () => {
+
+      const servicio =
+        document
+          .getElementById("servicio")
+          .value;
+
+      const nombre =
+        document
+          .getElementById("nombre")
+          .value
+          .trim();
+
+      const telefono =
+        document
+          .getElementById("telefono")
+          .value
+          .trim();
+
+      if (
+        !servicio ||
+        !fecha.value ||
+        !horaSeleccionada ||
+        !nombre ||
+        !telefono
+      ) {
+
+        alert(
+          "Completa todos los datos y selecciona un horario."
+        );
+
+        return;
+      }
+
+      botonReservar.disabled = true;
+
+      botonReservar.textContent =
+        "RESERVANDO...";
+
+      try {
+
+        const respuesta =
+          await fetch(
+            "/api/reservas",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json"
+              },
+
+              body: JSON.stringify({
+                servicio: servicio,
+                barbero: "Master",
+                fecha: fecha.value,
+                hora: horaSeleccionada,
+                nombre: nombre,
+                telefono: telefono
+              })
+            }
+          );
+
+        const resultado =
+          await respuesta.json();
+
+        if (!respuesta.ok) {
+
+          throw new Error(
+            resultado.error ||
+            "No se pudo realizar la reserva."
+          );
+        }
+
+        alert(
+          "💈 ¡Reserva confirmada! Te esperamos en El Máster."
+        );
+
+        horaSeleccionada = "";
+
+        await cargarHorarios();
+
+      } catch (error) {
+
+        alert(
+          error.message ||
+          "Ocurrió un error. Intenta nuevamente."
+        );
+
+      } finally {
+
+        botonReservar.disabled = false;
+
+        botonReservar.textContent =
+          "CONFIRMAR RESERVA";
+      }
+    }
+  );
+</script>
+
+</body>
+</html>
