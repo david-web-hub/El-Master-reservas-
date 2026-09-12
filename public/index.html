@@ -436,7 +436,7 @@
     try {
 
       const respuesta = await fetch(
-        `/api/disponibilidad?fecha=${encodeURIComponent(fecha.value)}`
+        `/api/availability?fecha=${encodeURIComponent(fecha.value)}`
       );
 
       if (!respuesta.ok) {
@@ -560,7 +560,7 @@
 
         const respuesta =
           await fetch(
-            "/api/reservas",
+           "/api/bookings",
             {
               method: "POST",
 
