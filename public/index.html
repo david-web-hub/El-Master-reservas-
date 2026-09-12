@@ -436,7 +436,7 @@
     try {
 
       const respuesta = await fetch(
-        `/api/availability?fecha=${encodeURIComponent(fecha.value)}`
+      `/api/availability?date=${encodeURIComponent(fecha.value)}&barberId=master&serviceId=${encodeURIComponent(servicio.value)}`
       );
 
       if (!respuesta.ok) {
