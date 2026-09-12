@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel El Máster</title>
+<style>
+body{
+background:#080808;
+color:white;
+font-family:Arial,sans-serif;
+padding:20px;
+margin:0;
+}
+.header{
+display:flex;
+align-items:center;
+gap:15px;
+margin-bottom:25px;
+}
+.logo{
+width:60px;
+height:60px;
+border-radius:50%;
+background:#D4AF37;
+display:flex;
+align-items:center;
+justify-content:center;
+font-size:28px;
+}
+.card{
+background:#121212;
+padding:18px;
+border-radius:18px;
+margin-bottom:15px;
+border:1px solid #2a2a2a;
+}
+.numero{
+font-size:32px;
+font-weight:bold;
+color:#D4AF37;
+}
+.grid{
+display:grid;
+grid-template-columns:repeat(2,1fr);
+gap:12px;
+margin-bottom:20px;
+}
+.cita{
+background:#1b1b1b;
+padding:15px;
+border-radius:15px;
+margin-top:12px;
+}
+button{
+width:100%;
+padding:14px;
+border:none;
+border-radius:12px;
+font-size:16px;
+font-weight:bold;
+margin-top:10px;
+}
+.ok{
+background:#D4AF37;
+color:black;
+}
+.cancel{
+background:#A11;
+color:white;
+}
+.badge{
+background:#D4AF37;
+color:black;
+padding:4px 10px;
+border-radius:20px;
+font-size:12px;
+font-weight:bold;
+}
+input{
+width:100%;
+padding:12px;
+border-radius:12px;
+border:none;
+background:#222;
+color:white;
+margin-top:8px;
+box-sizing:border-box;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+<div class="logo">💈</div>
+<div>
+<h2>EL MÁSTER BARBER STUDIO</h2>
+<div>Panel Administrativo</div>
+</div>
+</div>
+
+<div class="grid">
+<div class="card">
+<div class="numero" id="total">0</div>
+Reservas Totales
+</div>
+<div class="card">
+<div class="numero" id="hoy">0</div>
+Reservas de Hoy
+</div>
+</div>
+
+<div class="card">
+<h3>Buscar cliente</h3>
+<input id="buscar" placeholder="Nombre o WhatsApp">
+</div>
+
+<div class="card">
+<h3>Reservas</h3>
+<div id="lista">Cargando...</div>
+</div>
+
+<script>
+const lista=document.getElementById('lista');
+const total=document.getElementById('total');
+const hoy=document.getElementById('hoy');
+const buscar=document.getElementById('buscar');
+
+let reservas=[];
+
+async function cargar(){
+const res=await fetch('/api/bookings');
+reservas=await res.json();
+mostrar(reservas);
+}
+
+function mostrar(datos){
+lista.innerHTML='';
+total.textContent=datos.length;
+const hoyFecha=new Date().toISOString().slice(0,10);
+hoy.textContent=datos.filter(r=>r.date===hoyFecha).length;
+
+if(datos.length===0){
+lista.innerHTML='No hay reservas';
+return;
+}
+
+datos.reverse().forEach((r,index)=>{
+lista.innerHTML+=`
+<div class="cita">
+<div class="badge">${r.serviceId}</div>
+<h3>${r.name}</h3>
+<p>📅 ${r.date}</p>
+<p>🕒 ${r.time}</p>
+<p>📱 ${r.phone}</p>
+<button class="cancel" onclick="eliminar(${index})">Cancelar Reserva</button>
+</div>`;
+});
+}
+
+buscar.oninput=()=>{
+const t=buscar.value.toLowerCase();
+mostrar(reservas.filter(r=>
+r.name.toLowerCase().includes(t)||
+r.phone.includes(t)
+));
+}
+
+async function eliminar(i){
+if(!confirm('¿Cancelar esta reserva?')) return;
+alert('La función de cancelar la conectaremos al servidor en el siguiente paso.');
+}
+
+cargar();
+</script>
+
+</body>
+</html>
