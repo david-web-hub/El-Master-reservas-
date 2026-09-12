@@ -1,0 +1,12 @@
+{
+  "name": "El Máster Barber Studio",
+  "short_name": "El Máster",
+  "description": "Sistema de reservas de El Máster Barber Studio",
+  "start_url": "/admin.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#080808",
+  "theme_color": "#080808",
+  "orientation": "portrait",
+  "lang": "es"
+}
