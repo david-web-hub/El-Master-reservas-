@@ -153,7 +153,7 @@ lista.innerHTML+=`
 <p>📅 ${r.date}</p>
 <p>🕒 ${r.time}</p>
 <p>📱 ${r.phone}</p>
-<button class="cancel" onclick="eliminar(${index})">Cancelar Reserva</button>
+<button class="cancel" onclick="eliminar('${r.id}')">Cancelar Reserva</button>
 </div>`;
 });
 }
@@ -166,9 +166,26 @@ r.phone.includes(t)
 ));
 }
 
-async function eliminar(i){
-if(!confirm('¿Cancelar esta reserva?')) return;
-alert('La función de cancelar la conectaremos al servidor en el siguiente paso.');
+async function eliminar(id){
+  if(!confirm('¿Cancelar esta reserva?')) return;
+
+  const res = await fetch(`/api/bookings/${id}`,{
+    method:'PATCH',
+    headers:{
+      'Content-Type':'application/json'
+    },
+    body:JSON.stringify({
+      status:'cancelled'
+    })
+  });
+
+  if(!res.ok){
+    alert('No se pudo cancelar la reserva.');
+    return;
+  }
+
+  alert('Reserva cancelada correctamente.');
+  await cargar();
 }
 
 cargar();
