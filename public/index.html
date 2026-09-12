@@ -449,7 +449,7 @@
         await respuesta.json();
 
       mostrarHorarios(
-        datos.horarios || datos
+        datos.slots || []
       );
 
     } catch (error) {
