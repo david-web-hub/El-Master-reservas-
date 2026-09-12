@@ -1,0 +1,74 @@
+{
+  "business": {
+    "name": "El Máster",
+    "timezone": "America/Guayaquil",
+    "currency": "USD",
+    "bookingDeposit": {
+      "enabled": false,
+      "type": "fixed",
+      "value": 0,
+      "configurable": true
+    }
+  },
+  "barbers": [
+    {
+      "id": "master",
+      "name": "Master",
+      "active": true,
+      "schedule": {
+        "0": [],
+        "1": [["08:00", "12:00"], ["13:30", "19:00"]],
+        "2": [["08:00", "12:00"], ["13:30", "19:00"]],
+        "3": [["08:00", "12:00"], ["13:30", "19:00"]],
+        "4": [["08:00", "12:00"], ["13:30", "19:00"]],
+        "5": [["08:00", "12:00"], ["13:30", "19:00"]],
+        "6": [["08:00", "12:00"], ["13:30", "19:00"]]
+      }
+    }
+  ],
+  "services": [
+    {
+      "id": "corte",
+      "name": "Corte de cabello",
+      "duration": 40,
+      "price": 5,
+      "active": true
+    },
+    {
+      "id": "barba",
+      "name": "Barba",
+      "duration": 20,
+      "price": 2,
+      "active": true
+    },
+    {
+      "id": "diseno",
+      "name": "Diseño",
+      "duration": 15,
+      "price": 1.5,
+      "active": true
+    },
+    {
+      "id": "corte-barba",
+      "name": "Corte + barba",
+      "duration": 60,
+      "price": 7,
+      "active": true
+    },
+    {
+      "id": "corte-diseno",
+      "name": "Corte + diseño",
+      "duration": 55,
+      "price": 6.5,
+      "active": true
+    },
+    {
+      "id": "corte-barba-diseno",
+      "name": "Corte + barba + diseño",
+      "duration": 75,
+      "price": 8.5,
+      "active": true
+    }
+  ],
+  "bookings": []
+}
