@@ -259,7 +259,7 @@ function parseChosenTime(text, available){
 const waSessions = new Map();
 
 app.post('/webhooks/whatsapp', async (req,res)=>{
-  res.sendStatus(200);
+ console.log('WEBHOOK WHATSAPP RECIBIDO'); res.sendStatus(200);
   try{
     const value=req.body?.entry?.[0]?.changes?.[0]?.value;
     const msg=value?.messages?.[0];
