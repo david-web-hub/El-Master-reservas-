@@ -392,7 +392,7 @@ if (closingIntent.test(lower.trim())) {
           s.data.date=changed;
           s.data.lastAvailable=filterSlotsByPhrase(slotsFor(changed,s.data.barberId),text).slice(0,10);
           waSessions.set(from,s);
-          return sendWhatsApp(from,availabilityMessage(changed,s.data.barberId,text));
+          return sendWhatsApp(from,'💈 Perfecto. ¿A qué hora necesitas tu turno?');
         }
        return sendWhatsApp(from,'Ese horario no está disponible. Dime otra hora que te convenga y la reviso por ti. 💈');
       }
