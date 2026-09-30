@@ -272,7 +272,18 @@ app.post('/webhooks/whatsapp', async (req,res)=>{
     const lower=text.toLowerCase();
     const db=readDB();
     let s=waSessions.get(from)||{step:'idle',data:{}};
+// Cierre natural de conversación
+const closingIntent =
+  /^(gracias|muchas gracias|gracias lia|listo|perfecto|eso es todo|nada mas|nada más|ya no necesito mas|ya no necesito más|ya no necesito mas citas|ya no necesito más citas|ya no necesito mas reservaciones|ya no necesito más reservaciones|hasta luego|chao|adios|adiós|buen dia|buen día|buenas noches)[.! ]*$/i;
 
+if (closingIntent.test(lower.trim())) {
+  waSessions.set(from,{step:'idle',data:{}});
+  return sendWhatsApp(
+    from,
+    '😊 ¡Con gusto! Fue un placer atenderte.\n\n' +
+    'Si luego necesitas una nueva cita, solo escríbeme “quiero reservar” y con gusto te ayudo. 💈'
+  );
+}
     // Greeting / help
     if(/^(hola|buenas|buenos dias|buenas tardes|buenas noches|hey|ola)\b/i.test(lower) && s.step==='idle'){
       waSessions.set(from,s);
