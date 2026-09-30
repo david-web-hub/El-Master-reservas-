@@ -233,9 +233,9 @@ function findBarberFromText(text, db){
   return db.barbers.find(b=>t.includes(b.name.toLowerCase()));
 }
 
-function availabilityMessage(date, barberId, phrase=''){
+function availabilityMessage(date, barberId, phrase='', serviceId=null, cantidadPersonas=1){
   const db=readDB();
-  let slots=slotsFor(date,barberId);
+  let slots=slotsFor(date, barberId, serviceId, cantidadPersonas);
   slots=filterSlotsByPhrase(slots,phrase).slice(0,10);
   const barber=db.barbers.find(x=>x.id===barberId)?.name || 'el barbero';
   if(!slots.length) return `No tengo horarios libres que coincidan para ${date} con ${barber}. Si quieres, dime otra fecha u horario y lo reviso enseguida.`;
