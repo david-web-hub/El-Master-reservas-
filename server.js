@@ -272,6 +272,13 @@ app.post('/webhooks/whatsapp', async (req,res)=>{
     const lower=text.toLowerCase();
     const db=readDB();
     let s=waSessions.get(from)||{step:'idle',data:{}};
+    // Detectar cantidad de personas para la reserva
+const matchPersonas = lower.match(/\b([1-9]|10)\s*(persona|personas)\b/i);
+
+if (matchPersonas) {
+  s.data.cantidadPersonas = parseInt(matchPersonas[1], 10);
+  waSessions.set(from, s);
+}
 // Cierre natural de conversación
 const closingIntent =
   /(gracias|muchas gracias|gracias lia|eso es todo|nada m[aá]s|ya no necesito|no necesito m[aá]s|no quiero reservar m[aá]s|no quiero m[aá]s citas|hasta luego|chao|adios|adi[oó]s|buen d[ií]a)/i;
