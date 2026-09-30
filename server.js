@@ -28,7 +28,7 @@ function toHHMM(total){
   return `${String(Math.floor(total/60)).padStart(2,'0')}:${String(total%60).padStart(2,'0')}`;
 }
 
-function slotsFor(date, barberId, serviceId=null){
+function slotsFor(date, barberId, serviceId=null, cantidadPersonas=1){
   const db = readDB();
   const barber = db.barbers.find(b=>b.id===barberId && b.active!==false);
   if(!barber) return [];
