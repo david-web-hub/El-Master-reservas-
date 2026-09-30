@@ -261,6 +261,43 @@ function parseChosenTime(text, available){
   const hhmm=`${String(h).padStart(2,'0')}:${String(mins).padStart(2,'0')}`;
   return available.includes(hhmm)?hhmm:null;
 }
+function extractRequestedTime(text){
+  const t = text.toLowerCase().trim();
+
+  const m = t.match(/\b(?:a\s+las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.?\s*m\.?|p\.?\s*m\.?|de la mañana|de la tarde|de la noche)?\b/i);
+
+  if(!m) return null;
+
+  let h = Number(m[1]);
+  const mins = Number(m[2] || 0);
+  const periodo = (m[3] || '').toLowerCase();
+
+  if(
+    (periodo.includes('pm') ||
+     periodo.includes('p.') ||
+     periodo.includes('tarde') ||
+     periodo.includes('noche')) &&
+    h < 12
+  ){
+    h += 12;
+  }
+
+  if(
+    (periodo.includes('am') ||
+     periodo.includes('a.') ||
+     periodo.includes('mañana')) &&
+    h === 12
+  ){
+    h = 0;
+  }
+
+  if(!periodo && h <= 7) h += 12;
+
+  if(h > 23 || mins > 59) return null;
+
+  return `${String(h).padStart(2,'0')}:${String(mins).padStart(2,'0')}`;
+}
+
 function extraerCantidadPersonas(text){
   const t = text.toLowerCase();
 
