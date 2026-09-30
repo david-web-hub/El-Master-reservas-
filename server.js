@@ -274,7 +274,7 @@ app.post('/webhooks/whatsapp', async (req,res)=>{
     let s=waSessions.get(from)||{step:'idle',data:{}};
 // Cierre natural de conversación
 const closingIntent =
-  /^(gracias|muchas gracias|gracias lia|listo|perfecto|eso es todo|nada mas|nada más|ya no necesito mas|ya no necesito más|ya no necesito mas citas|ya no necesito más citas|ya no necesito mas reservaciones|ya no necesito más reservaciones|hasta luego|chao|adios|adiós|buen dia|buen día|buenas noches)[.! ]*$/i;
+  /(gracias|muchas gracias|gracias lia|eso es todo|nada m[aá]s|ya no necesito|no necesito m[aá]s|no quiero reservar m[aá]s|no quiero m[aá]s citas|hasta luego|chao|adios|adi[oó]s|buen d[ií]a)/i;
 
 if (closingIntent.test(lower.trim())) {
   waSessions.set(from,{step:'idle',data:{}});
