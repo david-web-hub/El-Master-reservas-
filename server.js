@@ -324,12 +324,9 @@ if (closingIntent.test(lower.trim())) {
     if(/^(hola|buenas|buenos dias|buenas tardes|buenas noches|hey|ola)\b/i.test(lower) && s.step==='idle'){
       waSessions.set(from,s);
       return sendWhatsApp(from,
-        '👋 ¡Hola! Soy el asistente de reservas de la barbería.\n\n' +
-        'Puedes escribirme de forma natural, por ejemplo:\n' +
-        '• “¿Tienes cita para hoy después de las 5?”\n' +
-        '• “Quiero corte mañana en la tarde”\n' +
-        '• “Reserva el viernes a las 16:00”\n\n' +
-        'Yo reviso la agenda y te ayudo a reservar.'
+       '👋 ¡Hola! Bienvenido a El Máster 💈\n\n' +
+'Con gusto puedo ayudarte a reservar tu cita.\n\n' +
+'Dime para qué día necesitas tu turno y cuántos turnos deseas reservar.'
       );
     }
 
