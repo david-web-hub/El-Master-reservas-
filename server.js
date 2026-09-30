@@ -38,7 +38,7 @@ function slotsFor(date, barberId, serviceId=null, cantidadPersonas=1){
   if(!periods.length) return [];
 
   const service = serviceId ? db.services.find(s=>s.id===serviceId) : null;
-  const duration = service?.duration || 40;
+  const duration = calcularDuracionReserva(db, serviceId, cantidadPersonas);
   const step = 5;
 
   const bookings = db.bookings.filter(b=>
@@ -49,7 +49,7 @@ function slotsFor(date, barberId, serviceId=null, cantidadPersonas=1){
 
   const overlaps = (start,end) => bookings.some(b=>{
     const bookedService = db.services.find(s=>s.id===b.serviceId);
-    const bookedDuration = bookedService?.duration || 40;
+    const bookedDuration = calcularDuracionReserva(db, b.serviceId, b.cantidadPersonas || 1);
     const bs = toMinutes(b.time);
     const be = bs + bookedDuration;
     return start < be && end > bs;
@@ -221,6 +221,12 @@ function findServiceFromText(text, db){
   if(/\bcorte\b/.test(t)) return db.services.find(s=>s.id==='corte');
   return null;
 }
+function calcularDuracionReserva(db, serviceId, cantidadPersonas=1){
+  const servicio = db.services.find(s=>s.id===serviceId);
+  const duracionServicio = servicio?.duration || 40;
+  return duracionServicio * Math.max(1, cantidadPersonas);
+}
+
 
 function findBarberFromText(text, db){
   const t=text.toLowerCase();
@@ -255,7 +261,30 @@ function parseChosenTime(text, available){
   const hhmm=`${String(h).padStart(2,'0')}:${String(mins).padStart(2,'0')}`;
   return available.includes(hhmm)?hhmm:null;
 }
+function extraerCantidadPersonas(text){
+  const t = text.toLowerCase();
 
+  const numeros = t.match(/\b(?:somos|para|seremos)\s+(\d+)\b/);
+  if(numeros) return Math.max(1, Number(numeros[1]));
+
+  const palabras = {
+    uno:1, una:1,
+    dos:2,
+    tres:3,
+    cuatro:4,
+    cinco:5,
+    seis:6,
+    siete:7,
+    ocho:8,
+    nueve:9,
+    diez:10
+  };
+
+  const m = t.match(/\b(?:somos|para|seremos)\s+(uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/);
+  if(m) return palabras[m[1]];
+
+  return null;
+}
 const waSessions = new Map();
 
 app.post('/webhooks/whatsapp', async (req,res)=>{
@@ -272,11 +301,11 @@ app.post('/webhooks/whatsapp', async (req,res)=>{
     const lower=text.toLowerCase();
     const db=readDB();
     let s=waSessions.get(from)||{step:'idle',data:{}};
-    // Detectar cantidad de personas para la reserva
-const matchPersonas = lower.match(/\b([1-9]|10)\s*(persona|personas)\b/i);
+  // Detectar cantidad de personas para la reserva
+const cantidadPersonas = extraerCantidadPersonas(text);
 
-if (matchPersonas) {
-  s.data.cantidadPersonas = parseInt(matchPersonas[1], 10);
+if (cantidadPersonas) {
+  s.data.cantidadPersonas = cantidadPersonas;
   waSessions.set(from, s);
 }
 // Cierre natural de conversación
@@ -409,6 +438,7 @@ if (closingIntent.test(lower.trim())) {
         name:text,
         phone:from,
         serviceId:s.data.serviceId,
+        cantidadPersonas:s.data.cantidadPersonas || 1,
         barberId:s.data.barberId,
         date:s.data.date,
         time:s.data.time,
