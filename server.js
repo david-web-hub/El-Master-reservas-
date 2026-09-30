@@ -326,7 +326,7 @@ if (closingIntent.test(lower.trim())) {
       return sendWhatsApp(from,
        '👋 ¡Hola! Bienvenido a El Máster 💈\n\n' +
 'Con gusto puedo ayudarte a reservar tu cita.\n\n' +
-'Dime para qué día necesitas tu turno y cuántos turnos deseas reservar.'
+'Dime para qué día y a qué hora necesitas tu turno.'
       );
     }
 
