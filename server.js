@@ -373,14 +373,19 @@ if (closingIntent.test(lower.trim())) {
       return sendWhatsApp(from,availabilityMessage(s.data.date,s.data.barberId,text));
     }
 
-    if(s.step==='date'){
-      const date=dateFromSpanish(text);
-      if(!date) return sendWhatsApp(from,'Dime una fecha, por ejemplo “hoy”, “mañana”, “viernes” o 2026-09-15.');
-      s.data.date=date;
-      s.data.lastAvailable=filterSlotsByPhrase(slotsFor(date,s.data.barberId),text).slice(0,10);
-      s.step='time'; waSessions.set(from,s);
-      return sendWhatsApp(from,availabilityMessage(date,s.data.barberId,text));
-    }
+  if(s.step==='date'){
+  const date=dateFromSpanish(text);
+
+  if(!date){
+    return sendWhatsApp(from,'📅 Dime para qué día necesitas tu turno.');
+  }
+
+  s.data.date=date;
+  s.step='time';
+  waSessions.set(from,s);
+
+  return sendWhatsApp(from,'🕐 Perfecto. ¿A qué hora necesitas tu turno?');
+}
 
     if(s.step==='time'){
       let available=slotsFor(s.data.date,s.data.barberId,s.data.serviceId||null);
