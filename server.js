@@ -394,7 +394,7 @@ if (closingIntent.test(lower.trim())) {
           waSessions.set(from,s);
           return sendWhatsApp(from,availabilityMessage(changed,s.data.barberId,text));
         }
-        return sendWhatsApp(from,'Ese horario no está libre. Escríbeme otra hora o dime otro día y te muestro opciones.');
+       return sendWhatsApp(from,'Ese horario no está disponible. Dime otra hora que te convenga y la reviso por ti. 💈');
       }
       s.data.time=chosen;
 
