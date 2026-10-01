@@ -235,11 +235,38 @@ function findBarberFromText(text, db){
 
 function availabilityMessage(date, barberId, phrase='', serviceId=null, cantidadPersonas=1){
   const db=readDB();
-  let slots=slotsFor(date, barberId, serviceId, cantidadPersonas);
-  slots=filterSlotsByPhrase(slots,phrase).slice(0,10);
+  const slots=slotsFor(date, barberId, serviceId, cantidadPersonas);
   const barber=db.barbers.find(x=>x.id===barberId)?.name || 'el barbero';
-  if(!slots.length) return `No tengo horarios libres que coincidan para ${date} con ${barber}. Si quieres, dime otra fecha u horario y lo reviso enseguida.`;
-  return `📅 Para ${date} con ${barber} tengo disponibles:\n${slots.map((x,i)=>`${i+1}. ${x}`).join('\n')}\n\nPuedes responder con el número o escribir la hora que prefieras.`;
+
+  const requested=extractRequestedTime(phrase);
+
+  if(requested){
+    if(slots.includes(requested)){
+      return `✅ Sí, tengo disponible las ${requested} para ${date} con ${barber}. ¿Quieres reservar ese horario?`;
+    }
+
+    const toMinutes=(time)=>{
+      const [h,m]=time.split(':').map(Number);
+      return h*60+m;
+    };
+
+    const requestedMinutes=toMinutes(requested);
+
+    const nearby=[...slots]
+      .sort((a,b)=>
+        Math.abs(toMinutes(a)-requestedMinutes) -
+        Math.abs(toMinutes(b)-requestedMinutes)
+      )
+      .slice(0,3);
+
+    if(!nearby.length){
+      return `😕 No tengo horarios disponibles para ${date}. ¿Quieres intentar con otro día?`;
+    }
+
+    return `Ese horario no está disponible 😕\n\nLos horarios más cercanos que tengo son:\n${nearby.map((x,i)=>`${i+1}. ${x}`).join('\n')}\n\n¿Cuál te sirve?`;
+  }
+
+  return `Perfecto 👍 ¿A qué hora aproximadamente necesitas tu turno?`;
 }
 
 function looksLikeAvailabilityQuestion(text){
