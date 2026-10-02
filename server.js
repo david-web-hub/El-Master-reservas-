@@ -364,29 +364,137 @@ function extractRequestedTime(text){
   return `${String(h).padStart(2,'0')}:${String(mins).padStart(2,'0')}`;
 }
 
+function normalizar(text){
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'');
+}
+
+const NUMEROS_PALABRA = {
+  un:1,
+  uno:1,
+  una:1,
+  dos:2,
+  tres:3,
+  cuatro:4,
+  cinco:5,
+  seis:6,
+  siete:7,
+  ocho:8,
+  nueve:9,
+  diez:10
+};
+
+function numeroNatural(valor){
+  if(valor == null) return null;
+
+  const t = normalizar(valor).trim();
+
+  if(/^\d+$/.test(t)){
+    return Number(t);
+  }
+
+  return NUMEROS_PALABRA[t] || null;
+}
+
 function extraerCantidadPersonas(text){
-  const t = text.toLowerCase();
+  const t = normalizar(text);
 
-  const numeros = t.match(/\b(?:somos|para|seremos)\s+(\d+)\b/);
-  if(numeros) return Math.max(1, Number(numeros[1]));
+  const numero =
+    '(\\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)';
 
-  const palabras = {
-    uno:1, una:1,
-    dos:2,
-    tres:3,
-    cuatro:4,
-    cinco:5,
-    seis:6,
-    siete:7,
-    ocho:8,
-    nueve:9,
-    diez:10
-  };
+  const patrones = [
+    new RegExp(
+      `\\b${numero}\\s+(?:personas?|turnos?|citas?)\\b`
+    ),
 
-  const m = t.match(/\b(?:somos|para|seremos)\s+(uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/);
-  if(m) return palabras[m[1]];
+    new RegExp(
+      `\\b(?:somos|seremos|para|necesito|quiero|deseo|reservar(?:\\s+para)?)\\s+${numero}\\b`
+    )
+  ];
+
+  for(const patron of patrones){
+    const resultado = t.match(patron);
+
+    if(resultado){
+      const cantidad = numeroNatural(resultado[1]);
+
+      if(cantidad){
+        return Math.min(
+          10,
+          Math.max(1,cantidad)
+        );
+      }
+    }
+  }
 
   return null;
+}
+
+function extraerServiciosMultiples(text,db){
+  const t = normalizar(text);
+
+  const numero =
+    '(\\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)';
+
+  const definiciones = [
+    {
+      id:'corte',
+      re:new RegExp(
+        `\\b${numero}\\s+cortes?\\b`,
+        'g'
+      )
+    },
+    {
+      id:'barba',
+      re:new RegExp(
+        `\\b${numero}\\s+(?:barbas?|servicios?\\s+de\\s+barba)\\b`,
+        'g'
+      )
+    },
+    {
+      id:'diseno',
+      re:new RegExp(
+        `\\b${numero}\\s+disenos?\\b`,
+        'g'
+      )
+    }
+  ];
+
+  const items = [];
+
+  for(const definicion of definiciones){
+    let resultado;
+
+    while(
+      (resultado = definicion.re.exec(t)) !== null
+    ){
+      const servicio = db.services.find(
+        s=>s.id===definicion.id
+      );
+
+      const cantidad =
+        numeroNatural(resultado[1]);
+
+      if(servicio && cantidad){
+        items.push({
+          serviceId:servicio.id,
+          count:cantidad
+        });
+      }
+    }
+  }
+
+  return items;
+}
+
+function cantidadDeItems(items=[]){
+  return items.reduce(
+    (total,item)=>
+      total + (Number(item.count) || 0),
+    0
+  );
 }
 const waSessions = new Map();
 
