@@ -372,6 +372,27 @@ if (cantidadPersonas) {
   s.data.cantidadPersonas = cantidadPersonas;
   waSessions.set(from, s);
 }
+if (cantidadPersonas && s.step !== 'idle') {
+    waSessions.set(from, s);
+
+    if (!s.data.date) {
+        s.step = 'date';
+        waSessions.set(from, s);
+        return sendWhatsApp(
+            from,
+            `Perfecto 👌 Serán ${cantidadPersonas} personas.\n\n📅 ¿Para qué día necesitan los turnos?`
+        );
+    }
+
+    if (!s.data.time) {
+        s.step = 'time';
+        waSessions.set(from, s);
+        return sendWhatsApp(
+            from,
+            `Perfecto 👌 Serán ${cantidadPersonas} personas.\n\n🕐 ¿A qué hora aproximadamente necesitan los turnos?`
+        );
+    }
+}    
 // Cierre natural de conversación
 const closingIntent =
   /(gracias|muchas gracias|gracias lia|eso es todo|nada m[aá]s|ya no necesito|no necesito m[aá]s|no quiero reservar m[aá]s|no quiero m[aá]s citas|hasta luego|chao|adios|adi[oó]s|buen d[ií]a)/i;
