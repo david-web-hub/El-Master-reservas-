@@ -498,38 +498,84 @@ if (closingIntent.test(lower.trim())) {
         );
       }
 
-      const fresh=readDB();
-      const booking={
-        id:`BK-${Date.now()}`,
-        name:text,
-        phone:from,
-        serviceId:s.data.serviceId,
-        cantidadPersonas:s.data.cantidadPersonas || 1,
-        barberId:s.data.barberId,
-        date:s.data.date,
-        time:s.data.time,
-        source:'whatsapp',
-        status:'confirmed',
-        createdAt:new Date().toISOString()
-      };
-      fresh.bookings.push(booking);
-      writeDB(fresh);
-      waSessions.delete(from);
+    const fresh=readDB();
 
-      const serviceName=fresh.services.find(x=>x.id===booking.serviceId)?.name;
-      const barberName=fresh.barbers.find(x=>x.id===booking.barberId)?.name;
-      return sendWhatsApp(from,
-        `✅ ¡Reserva confirmada!\n\n` +
-        `👤 ${booking.name}\n` +
-        `✂️ ${serviceName}\n` +
-        `💈 ${barberName}\n` +
-        `📅 ${booking.date}\n` +
-        `🕐 ${booking.time}\n\n` +
-        `Código: ${booking.id}\n` +
-        `Si luego necesitas cambiarla, escríbeme “cambiar cita”.`
-      );
+s.data.name=text;
+s.step='confirm';
+waSessions.set(from,s);
+
+const serviceName=fresh.services.find(x=>x.id===s.data.serviceId)?.name || 'Servicio';
+const barberName=fresh.barbers.find(x=>x.id===s.data.barberId)?.name || 'Master';
+
+return sendWhatsApp(from,
+  `📋 *Resumen de tu reserva*\n\n` +
+  `👤 ${s.data.name}\n` +
+  `✂️ ${serviceName}\n` +
+  `💈 ${barberName}\n` +
+  `📅 ${s.data.date}\n` +
+  `🕐 ${s.data.time}\n\n` +
+  `¿Está todo correcto?\n\n` +
+  `Escribe *CONFIRMAR* para reservar tu cita.`
+);
     }
+if(s.step==='confirm'){
+  const respuesta=text.trim().toLowerCase();
 
+  if(respuesta!=='confirmar'){
+    return sendWhatsApp(from,
+      'Para completar la reserva escribe *CONFIRMAR*.'
+    );
+  }
+
+  // Verificar nuevamente que el horario siga disponible
+  if(!slotsFor(
+    s.data.date,
+    s.data.barberId,
+    s.data.serviceId || null,
+    s.data.cantidadPersonas || 1
+  ).includes(s.data.time)){
+    s.step='time';
+    waSessions.set(from,s);
+
+    return sendWhatsApp(from,
+      '⚠️ Ese horario acaba de ser reservado por otra persona. Dime otra hora y la reviso por ti.'
+    );
+  }
+
+  const fresh=readDB();
+
+  const booking={
+    id:`BK-${Date.now()}`,
+    name:s.data.name,
+    phone:from,
+    serviceId:s.data.serviceId,
+    cantidadPersonas:s.data.cantidadPersonas || 1,
+    barberId:s.data.barberId,
+    date:s.data.date,
+    time:s.data.time,
+    source:'whatsapp',
+    status:'confirmed',
+    createdAt:new Date().toISOString()
+  };
+
+  fresh.bookings.push(booking);
+  writeDB(fresh);
+  waSessions.delete(from);
+
+  const serviceName=fresh.services.find(x=>x.id===booking.serviceId)?.name || 'Servicio';
+  const barberName=fresh.barbers.find(x=>x.id===booking.barberId)?.name || 'Master';
+
+  return sendWhatsApp(from,
+    `✅ *¡Reserva confirmada!*\n\n` +
+    `👤 ${booking.name}\n` +
+    `✂️ ${serviceName}\n` +
+    `💈 ${barberName}\n` +
+    `📅 ${booking.date}\n` +
+    `🕐 ${booking.time}\n\n` +
+    `Código: ${booking.id}\n` +
+    `Si luego necesitas cambiarla, escríbeme "cambiar cita".`
+  );
+}
     // Generic auto-reply so no text message is left unanswered.
     s.step='date';
     waSessions.set(from,s);
