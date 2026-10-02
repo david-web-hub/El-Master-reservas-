@@ -28,41 +28,80 @@ function toHHMM(total){
   return `${String(Math.floor(total/60)).padStart(2,'0')}:${String(total%60).padStart(2,'0')}`;
 }
 
-function slotsFor(date, barberId, serviceId=null, cantidadPersonas=1){
-  const db = readDB();
-  const barber = db.barbers.find(b=>b.id===barberId && b.active!==false);
+function calcularDuracionItems(db, serviceItems=[]){
+  return (serviceItems || []).reduce((total,item)=>{
+    const servicio=db.services.find(s=>s.id===item.serviceId);
+    return total + (servicio?.duration || 40) * Math.max(1, Number(item.count)||1);
+  },0);
+}
+
+function calcularDuracionReserva(db, serviceId, cantidadPersonas=1, serviceItems=null){
+  if(Array.isArray(serviceItems) && serviceItems.length){
+    return calcularDuracionItems(db, serviceItems);
+  }
+
+  const servicio=db.services.find(s=>s.id===serviceId);
+  const duracionServicio=servicio?.duration || 40;
+
+  return duracionServicio * Math.max(1, Number(cantidadPersonas)||1);
+}
+
+function slotsFor(date, barberId, serviceId=null, cantidadPersonas=1, serviceItems=null){
+  const db=readDB();
+
+  const barber=db.barbers.find(
+    b=>b.id===barberId && b.active!==false
+  );
+
   if(!barber) return [];
 
-  const jsDay = parseDateLocal(date).getUTCDay();
-  const periods = barber.schedule?.[String(jsDay)] || [];
+  const jsDay=parseDateLocal(date).getUTCDay();
+  const periods=barber.schedule?.[String(jsDay)] || [];
+
   if(!periods.length) return [];
 
-  const service = serviceId ? db.services.find(s=>s.id===serviceId) : null;
-  const duration = calcularDuracionReserva(db, serviceId, cantidadPersonas);
-  const step = 5;
+  const duration=calcularDuracionReserva(
+    db,
+    serviceId,
+    cantidadPersonas,
+    serviceItems
+  );
 
-  const bookings = db.bookings.filter(b=>
+  const step=5;
+
+  const bookings=db.bookings.filter(b=>
     b.date===date &&
     b.barberId===barberId &&
     b.status!=='cancelled'
   );
 
-  const overlaps = (start,end) => bookings.some(b=>{
-    const bookedService = db.services.find(s=>s.id===b.serviceId);
-    const bookedDuration = calcularDuracionReserva(db, b.serviceId, b.cantidadPersonas || 1);
-    const bs = toMinutes(b.time);
-    const be = bs + bookedDuration;
+  const overlaps=(start,end)=>bookings.some(b=>{
+    const bookedDuration=calcularDuracionReserva(
+      db,
+      b.serviceId,
+      b.cantidadPersonas || 1,
+      b.serviceItems || null
+    );
+
+    const bs=toMinutes(b.time);
+    const be=bs+bookedDuration;
+
     return start < be && end > bs;
   });
 
   const out=[];
+
   for(const [from,to] of periods){
     const start=toMinutes(from);
     const end=toMinutes(to);
+
     for(let t=start; t+duration<=end; t+=step){
-      if(!overlaps(t,t+duration)) out.push(toHHMM(t));
+      if(!overlaps(t,t+duration)){
+        out.push(toHHMM(t));
+      }
     }
   }
+
   return out;
 }
 
