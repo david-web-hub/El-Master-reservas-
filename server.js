@@ -512,36 +512,59 @@ app.post('/webhooks/whatsapp', async (req,res)=>{
     const lower=text.toLowerCase();
     const db=readDB();
     let s=waSessions.get(from)||{step:'idle',data:{}};
-  // Detectar cantidad de personas para la reserva
-const cantidadPersonas = extraerCantidadPersonas(text);
+// Detectar cantidad de personas y servicios múltiples
+const cantidadPersonasDetectada = extraerCantidadPersonas(text);
+const serviciosDetectados = extraerServiciosMultiples(text, db);
 
-if (cantidadPersonas) {
-  s.data.cantidadPersonas = cantidadPersonas;
-  waSessions.set(from, s);
+if (cantidadPersonasDetectada) {
+  s.data.cantidadPersonas = cantidadPersonasDetectada;
 }
-if (cantidadPersonas && s.step !== 'idle') {
+
+if (serviciosDetectados.length) {
+  s.data.serviceItems = serviciosDetectados;
+
+  const totalServicios = cantidadDeItems(serviciosDetectados);
+
+  // Si dice "2 cortes", también entendemos que son 2 turnos/personas
+  if (!cantidadPersonasDetectada && totalServicios > 0) {
+    s.data.cantidadPersonas = totalServicios;
+  }
+}
+
+// Si ya entendimos que quiere varios turnos, iniciamos la reserva
+if (
+  cantidadPersonasDetectada ||
+  serviciosDetectados.length
+) {
+  if (s.step === 'idle') {
+    s.step = 'date';
+  }
+
+  waSessions.set(from, s);
+
+  // Si todavía no tenemos fecha
+  if (!s.data.date) {
+    const cantidad = s.data.cantidadPersonas || 1;
+
+    return sendWhatsApp(
+      from,
+      `Perfecto 👌 Entendí que necesitas ${cantidad} ${cantidad === 1 ? 'turno' : 'turnos'}.\n\n📅 ¿Para qué día los necesitas?`
+    );
+  }
+
+  // Si ya tenemos fecha pero falta la hora
+  if (!s.data.time) {
+    s.step = 'time';
     waSessions.set(from, s);
 
-    if (!s.data.date) {
-        s.step = 'date';
-        waSessions.set(from, s);
-        return sendWhatsApp(
-            from,
-            `Perfecto 👌 Serán ${cantidadPersonas} personas.\n\n📅 ¿Para qué día necesitan los turnos?`
-        );
-    }
+    const cantidad = s.data.cantidadPersonas || 1;
 
-    if (!s.data.time) {
-        s.step = 'time';
-        waSessions.set(from, s);
-        return sendWhatsApp(
-            from,
-            `Perfecto 👌 Serán ${cantidadPersonas} personas.\n\n🕐 ¿A qué hora aproximadamente necesitan los turnos?`
-        );
-    }
-}    
-// Cierre natural de conversación
-const closingIntent =
+    return sendWhatsApp(
+      from,
+      `Perfecto 👌 Tengo ${cantidad} ${cantidad === 1 ? 'turno' : 'turnos'} para esa fecha.\n\n🕐 ¿A qué hora aproximadamente deseas comenzar?`
+    );
+  }
+}const closingIntent =
   /(gracias|muchas gracias|gracias lia|eso es todo|nada m[aá]s|ya no necesito|no necesito m[aá]s|no quiero reservar m[aá]s|no quiero m[aá]s citas|hasta luego|chao|adios|adi[oó]s|buen d[ií]a)/i;
 
 if (closingIntent.test(lower.trim())) {
