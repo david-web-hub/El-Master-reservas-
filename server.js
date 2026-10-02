@@ -13,7 +13,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-
 /* =========================================================
    BASE DE DATOS
 ========================================================= */
@@ -23,13 +22,8 @@ function readDB() {
 }
 
 function writeDB(data) {
-  fs.writeFileSync(
-    DB,
-    JSON.stringify(data, null, 2),
-    'utf8'
-  );
+  fs.writeFileSync(DB, JSON.stringify(data, null, 2), 'utf8');
 }
-
 
 /* =========================================================
    UTILIDADES GENERALES
@@ -44,81 +38,60 @@ function normalizar(text) {
 
 function parseDateLocal(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
-
-  return new Date(
-    Date.UTC(y, m - 1, d, 12, 0, 0)
-  );
+  return new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
 }
 
 function toMinutes(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
-
-  return (h * 60) + m;
+  return h * 60 + m;
 }
 
 function toHHMM(total) {
-  const h = Math.floor(total / 60);
-  const m = total % 60;
-
-  return (
-    String(h).padStart(2, '0') +
-    ':' +
-    String(m).padStart(2, '0')
-  );
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(
+    total % 60
+  ).padStart(2, '0')}`;
 }
 
+function formatHora(hhmm) {
+  if (!hhmm) return '';
+
+  const [hh, mm] = hhmm.split(':').map(Number);
+  const ap = hh >= 12 ? 'PM' : 'AM';
+
+  let h = hh % 12;
+  if (h === 0) h = 12;
+
+  return `${h}:${String(mm).padStart(2, '0')} ${ap}`;
+}
 
 /* =========================================================
    FECHAS
 ========================================================= */
 
 function localDateParts(offsetDays = 0) {
-
   const now = new Date();
 
-  const parts = new Intl.DateTimeFormat(
-    'en-CA',
-    {
-      timeZone: TZ,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }
-  ).formatToParts(now);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(now);
 
-  const y = Number(
-    parts.find(x => x.type === 'year').value
-  );
-
-  const m = Number(
-    parts.find(x => x.type === 'month').value
-  );
-
-  const d = Number(
-    parts.find(x => x.type === 'day').value
-  );
+  const y = Number(parts.find(x => x.type === 'year').value);
+  const m = Number(parts.find(x => x.type === 'month').value);
+  const d = Number(parts.find(x => x.type === 'day').value);
 
   const utc = new Date(
-    Date.UTC(
-      y,
-      m - 1,
-      d + offsetDays,
-      12,
-      0,
-      0
-    )
+    Date.UTC(y, m - 1, d + offsetDays, 12, 0, 0)
   );
 
   return utc.toISOString().slice(0, 10);
 }
 
-
 function dateFromSpanish(text) {
-
   const t = normalizar(text);
 
-  // IMPORTANTE:
-  // "pasado mañana" debe comprobarse antes de "mañana".
   if (/\bpasado manana\b/.test(t)) {
     return localDateParts(2);
   }
@@ -131,8 +104,6 @@ function dateFromSpanish(text) {
     return localDateParts(0);
   }
 
-
-  // Formato: 2026-10-02
   const iso = t.match(
     /\b(20\d{2})-(\d{2})-(\d{2})\b/
   );
@@ -141,27 +112,20 @@ function dateFromSpanish(text) {
     return iso[0];
   }
 
-
-  // Formatos: 2/10, 02/10/2026, 2-10-2026
   const dm = t.match(
     /\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](20\d{2}))?\b/
   );
 
   if (dm) {
-
     const year =
-      dm[3] ||
-      localDateParts().slice(0, 4);
+      dm[3] || localDateParts().slice(0, 4);
 
-    return (
-      `${year}-` +
-      `${String(dm[2]).padStart(2, '0')}-` +
-      `${String(dm[1]).padStart(2, '0')}`
-    );
+    return `${year}-${String(dm[2]).padStart(
+      2,
+      '0'
+    )}-${String(dm[1]).padStart(2, '0')}`;
   }
 
-
-  // Días de la semana
   const weekdays = {
     domingo: 0,
     lunes: 1,
@@ -172,25 +136,15 @@ function dateFromSpanish(text) {
     sabado: 6
   };
 
-
-  for (
-    const [name, target]
-    of Object.entries(weekdays)
-  ) {
-
-    if (
-      new RegExp(`\\b${name}\\b`).test(t)
-    ) {
-
+  for (const [name, target] of Object.entries(weekdays)) {
+    if (new RegExp(`\\b${name}\\b`).test(t)) {
       const base = new Date(
-        localDateParts() +
-        'T12:00:00-05:00'
+        localDateParts() + 'T12:00:00-05:00'
       );
 
-      const currentDay = base.getDay();
+      const current = base.getDay();
 
-      let add =
-        (target - currentDay + 7) % 7;
+      let add = (target - current + 7) % 7;
 
       if (add === 0) {
         add = 7;
@@ -203,22 +157,18 @@ function dateFromSpanish(text) {
   return null;
 }
 
-
 /* =========================================================
-   CANTIDAD DE TURNOS / PERSONAS
+   NÚMEROS Y CANTIDAD DE TURNOS
 ========================================================= */
 
 const NUMEROS = {
-
   un: 1,
   uno: 1,
   una: 1,
-
   dos: 2,
   tres: 3,
   cuatro: 4,
   cinco: 5,
-
   seis: 6,
   siete: 7,
   ocho: 8,
@@ -226,11 +176,8 @@ const NUMEROS = {
   diez: 10
 };
 
-
 function numeroNatural(value) {
-
-  const t =
-    normalizar(value).trim();
+  const t = normalizar(value).trim();
 
   if (/^\d+$/.test(t)) {
     return Number(t);
@@ -239,165 +186,177 @@ function numeroNatural(value) {
   return NUMEROS[t] || null;
 }
 
-
 function extraerCantidadPersonas(
   text,
   allowBareNumber = false
 ) {
-
-  const t =
-    normalizar(text).trim();
+  const t = normalizar(text).trim();
 
   const numero =
     '(\\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)';
 
-
   const patterns = [
-
     new RegExp(
       `\\b${numero}\\s+(?:personas?|turnos?|citas?)\\b`
     ),
-
     new RegExp(
       `\\b(?:somos|seremos|para|necesito|quiero|deseo)\\s+${numero}\\s*(?:personas?|turnos?|citas?)?\\b`
     )
   ];
 
-
   for (const re of patterns) {
-
     const match = t.match(re);
 
     if (match) {
+      const n = numeroNatural(match[1]);
 
-      const cantidad =
-        numeroNatural(match[1]);
-
-      if (cantidad) {
-
+      if (n) {
         return Math.min(
           10,
-          Math.max(1, cantidad)
+          Math.max(1, n)
         );
       }
     }
   }
 
-
-  /*
-    Solamente aceptamos "2", "3", etc.
-    como cantidad cuando el bot está
-    específicamente preguntando
-    cuántos turnos necesita.
-
-    Esto evita el problema anterior
-    donde "2" podía convertirse en
-    el segundo horario disponible.
-  */
   if (allowBareNumber) {
+    const n = numeroNatural(t);
 
-    const cantidad =
-      numeroNatural(t);
-
-    if (cantidad) {
-
+    if (n) {
       return Math.min(
         10,
-        Math.max(1, cantidad)
+        Math.max(1, n)
       );
     }
   }
 
-
   return null;
 }
-
 
 /* =========================================================
    SERVICIOS
 ========================================================= */
 
 function findServiceFromText(text, db) {
-
   const t = normalizar(text);
 
-
   if (
-    /corte.*barba.*disen|corte.*disen.*barba|barba.*corte.*disen/.test(t)
+    /corte.*barba.*disen|corte.*disen.*barba|barba.*corte.*disen/.test(
+      t
+    )
   ) {
-
     return db.services.find(
       s => s.id === 'corte-barba-diseno'
     );
   }
 
-
-  if (
-    /corte.*barba|barba.*corte/.test(t)
-  ) {
-
+  if (/corte.*barba|barba.*corte/.test(t)) {
     return db.services.find(
       s => s.id === 'corte-barba'
     );
   }
 
-
-  if (
-    /corte.*disen|disen.*corte/.test(t)
-  ) {
-
+  if (/corte.*disen|disen.*corte/.test(t)) {
     return db.services.find(
       s => s.id === 'corte-diseno'
     );
   }
 
-
   if (/\bbarba\b/.test(t)) {
-
     return db.services.find(
       s => s.id === 'barba'
     );
   }
 
-
   if (/\bdisen/.test(t)) {
-
     return db.services.find(
       s => s.id === 'diseno'
     );
   }
 
-
   if (/\bcorte\b/.test(t)) {
-
     return db.services.find(
       s => s.id === 'corte'
     );
   }
 
-
   return null;
 }
 
-
 function findBarberFromText(text, db) {
-
   const t = normalizar(text);
 
   return db.barbers.find(
     barber =>
-      t.includes(
-        normalizar(barber.name)
-      )
+      t.includes(normalizar(barber.name))
+  );
+}
+
+function serviceDuration(db, serviceId) {
+  return (
+    db.services.find(
+      service => service.id === serviceId
+    )?.duration || 40
   );
 }
 
 /* =========================================================
-   INTERPRETACIÓN DE HORAS
+   NUEVO MODELO: SERVICIO POR PERSONA
+========================================================= */
+
+function crearPersonas(cantidad) {
+  const personas = [];
+
+  for (let i = 0; i < cantidad; i++) {
+    personas.push({
+      index: i + 1,
+      serviceId: null,
+      duration: null,
+      time: null,
+      endTime: null
+    });
+  }
+
+  return personas;
+}
+
+function actualizarDuracionPersona(db, persona) {
+  if (!persona || !persona.serviceId) {
+    return persona;
+  }
+
+  persona.duration = serviceDuration(
+    db,
+    persona.serviceId
+  );
+
+  return persona;
+}
+
+function todasPersonasConServicio(personas = []) {
+  return (
+    personas.length > 0 &&
+    personas.every(
+      persona =>
+        persona.serviceId &&
+        Number(persona.duration) > 0
+    )
+  );
+}
+
+function duracionTotalPersonas(personas = []) {
+  return personas.reduce(
+    (total, persona) =>
+      total + (Number(persona.duration) || 0),
+    0
+  );
+}
+
+/* =========================================================
+   HORAS Y DETECCIÓN DE HORARIO
 ========================================================= */
 
 function extractRequestedTime(text) {
-
   const t = normalizar(text).trim();
 
   const match = t.match(
@@ -410,12 +369,8 @@ function extractRequestedTime(text) {
 
   let hour = Number(match[1]);
   const minutes = Number(match[2] || 0);
+  const period = normalizar(match[3] || '');
 
-  const period =
-    normalizar(match[3] || '');
-
-
-  // PM / tarde / noche
   if (
     (
       period.includes('pm') ||
@@ -428,8 +383,6 @@ function extractRequestedTime(text) {
     hour += 12;
   }
 
-
-  // AM / mañana
   if (
     (
       period.includes('am') ||
@@ -441,35 +394,13 @@ function extractRequestedTime(text) {
     hour = 0;
   }
 
-
   /*
-    Si el cliente escribe solamente:
-
-    "2"
-    "3"
-    "4:30"
-
-    durante la selección de hora,
-    interpretamos 1–7 como horario
-    de la tarde.
-
-    Ejemplo:
-    2  -> 14:00
-    3  -> 15:00
-    4:30 -> 16:30
-
-    Esto elimina el problema anterior
-    donde "2" significaba el segundo
-    horario de la lista.
-  */
-  if (
-    !period &&
-    hour >= 1 &&
-    hour <= 7
-  ) {
+   * En el contexto de la barbería:
+   * "a las 4" normalmente significa 4 PM.
+   */
+  if (!period && hour >= 1 && hour <= 7) {
     hour += 12;
   }
-
 
   if (
     hour > 23 ||
@@ -478,60 +409,35 @@ function extractRequestedTime(text) {
     return null;
   }
 
-
-  return (
-    String(hour).padStart(2, '0') +
-    ':' +
-    String(minutes).padStart(2, '0')
-  );
+  return `${String(hour).padStart(
+    2,
+    '0'
+  )}:${String(minutes).padStart(2, '0')}`;
 }
-
 
 /* =========================================================
-   DURACIÓN DE SERVICIOS Y RESERVAS
+   COMPATIBILIDAD CON RESERVAS ANTERIORES
 ========================================================= */
-
-function serviceDuration(db, serviceId) {
-
-  const service =
-    db.services.find(
-      s => s.id === serviceId
-    );
-
-  return service?.duration || 40;
-}
-
 
 function reservationDuration(
   db,
   serviceId,
   cantidadPersonas = 1
 ) {
-
-  const cantidad =
+  return (
+    serviceDuration(db, serviceId) *
     Math.max(
       1,
       Number(cantidadPersonas) || 1
-    );
-
-  return (
-    serviceDuration(db, serviceId) *
-    cantidad
+    )
   );
 }
 
-
-/*
-  Calcula cuánto ocupa una reserva
-  que ya existe en la base de datos.
-*/
 function bookingDuration(db, booking) {
-
   if (
     booking.endTime &&
     booking.time
   ) {
-
     const duration =
       toMinutes(booking.endTime) -
       toMinutes(booking.time);
@@ -541,7 +447,21 @@ function bookingDuration(db, booking) {
     }
   }
 
+  /*
+   * Reservas nuevas de grupo.
+   */
+  if (
+    Array.isArray(booking.people) &&
+    booking.people.length
+  ) {
+    return duracionTotalPersonas(
+      booking.people
+    );
+  }
 
+  /*
+   * Reservas antiguas.
+   */
   return reservationDuration(
     db,
     booking.serviceId,
@@ -549,177 +469,523 @@ function bookingDuration(db, booking) {
   );
 }
 
-
 /* =========================================================
-   HORARIOS DISPONIBLES
+   OCUPACIÓN DE AGENDA
 ========================================================= */
 
-function slotsFor(
+function getBookingsForDay(
+  db,
   date,
-  barberId,
-  serviceId = null,
-  cantidadPersonas = 1
+  barberId
 ) {
+  return db.bookings.filter(
+    booking =>
+      booking.date === date &&
+      booking.barberId === barberId &&
+      booking.status !== 'cancelled'
+  );
+}
 
-  const db = readDB();
+function bookingIntervals(
+  db,
+  booking
+) {
+  /*
+   * Las reservas nuevas pueden guardar
+   * un horario individual para cada persona.
+   */
+  if (
+    Array.isArray(booking.people) &&
+    booking.people.length
+  ) {
+    const intervals = booking.people
+      .filter(
+        person =>
+          person.time &&
+          person.endTime
+      )
+      .map(person => ({
+        start: toMinutes(person.time),
+        end: toMinutes(person.endTime)
+      }));
 
+    if (intervals.length) {
+      return intervals;
+    }
+  }
 
-  const barber =
-    db.barbers.find(
-      b =>
-        b.id === barberId &&
-        b.active !== false
+  /*
+   * Compatibilidad con las reservas
+   * creadas antes de esta actualización.
+   */
+  if (booking.time) {
+    const start = toMinutes(
+      booking.time
     );
 
+    const duration =
+      bookingDuration(db, booking);
+
+    return [
+      {
+        start,
+        end: start + duration
+      }
+    ];
+  }
+
+  return [];
+}
+
+function occupiedIntervals(
+  db,
+  date,
+  barberId
+) {
+  const bookings =
+    getBookingsForDay(
+      db,
+      date,
+      barberId
+    );
+
+  const intervals = [];
+
+  for (const booking of bookings) {
+    intervals.push(
+      ...bookingIntervals(
+        db,
+        booking
+      )
+    );
+  }
+
+  return intervals;
+}
+
+function overlapsAny(
+  start,
+  end,
+  intervals = []
+) {
+  return intervals.some(
+    interval =>
+      start < interval.end &&
+      end > interval.start
+  );
+}
+
+/* =========================================================
+   HORARIO DEL BARBERO
+========================================================= */
+
+function getSchedulePeriods(
+  db,
+  date,
+  barberId
+) {
+  const barber = db.barbers.find(
+    b =>
+      b.id === barberId &&
+      b.active !== false
+  );
 
   if (!barber) {
     return [];
   }
 
-
-  /*
-    Obtenemos el día de la semana.
-    Domingo = 0
-    Lunes = 1
-    ...
-    Sábado = 6
-  */
   const jsDay =
     parseDateLocal(date).getUTCDay();
 
-
-  const periods =
+  return (
     barber.schedule?.[
       String(jsDay)
-    ] || [];
+    ] || []
+  );
+}
 
+function intervalInsideSchedule(
+  periods,
+  start,
+  end
+) {
+  return periods.some(
+    ([from, to]) => {
+      const periodStart =
+        toMinutes(from);
 
-  if (!periods.length) {
-    return [];
+      const periodEnd =
+        toMinutes(to);
+
+      return (
+        start >= periodStart &&
+        end <= periodEnd
+      );
+    }
+  );
+}
+
+/* =========================================================
+   DISPONIBILIDAD INDIVIDUAL
+========================================================= */
+
+function isIntervalAvailable(
+  db,
+  date,
+  barberId,
+  start,
+  duration,
+  extraIntervals = []
+) {
+  const periods =
+    getSchedulePeriods(
+      db,
+      date,
+      barberId
+    );
+
+  const end =
+    start + duration;
+
+  if (
+    !intervalInsideSchedule(
+      periods,
+      start,
+      end
+    )
+  ) {
+    return false;
   }
 
-
-  /*
-    Duración TOTAL necesaria.
-
-    Ejemplo:
-
-    Corte = 40 minutos
-    3 personas = 120 minutos
-
-    El sistema solamente mostrará
-    una hora si esos 120 minutos
-    completos están libres.
-  */
-  const duration =
-    reservationDuration(
+  const occupied = [
+    ...occupiedIntervals(
       db,
-      serviceId,
-      cantidadPersonas
+      date,
+      barberId
+    ),
+    ...extraIntervals
+  ];
+
+  return !overlapsAny(
+    start,
+    end,
+    occupied
+  );
+}
+
+function availableStartsForDuration(
+  db,
+  date,
+  barberId,
+  duration
+) {
+  const periods =
+    getSchedulePeriods(
+      db,
+      date,
+      barberId
     );
 
-
-  /*
-    Reservas existentes para
-    ese barbero y ese día.
-  */
-  const bookings =
-    db.bookings.filter(
-      booking =>
-        booking.date === date &&
-        booking.barberId === barberId &&
-        booking.status !== 'cancelled'
+  const occupied =
+    occupiedIntervals(
+      db,
+      date,
+      barberId
     );
 
-
-  /*
-    Comprueba si el bloque que
-    queremos usar choca con
-    alguna reserva existente.
-  */
-  const overlaps =
-    (start, end) => {
-
-      return bookings.some(
-        booking => {
-
-          const bookingStart =
-            toMinutes(
-              booking.time
-            );
-
-          const bookingEnd =
-            bookingStart +
-            bookingDuration(
-              db,
-              booking
-            );
-
-
-          return (
-            start < bookingEnd &&
-            end > bookingStart
-          );
-        }
-      );
-    };
-
-
-  const available = [];
-
-  /*
-    Revisamos cada 5 minutos.
-
-    Así podremos encontrar opciones
-    cercanas como:
-
-    14:45
-    14:50
-    15:10
-    etc.
-  */
+  const results = [];
   const step = 5;
 
-
-  for (
-    const [from, to]
-    of periods
-  ) {
-
+  for (const [from, to] of periods) {
     const start =
       toMinutes(from);
 
-    const end =
+    const finish =
       toMinutes(to);
 
-
     for (
-      let current = start;
-      current + duration <= end;
-      current += step
+      let minute = start;
+      minute + duration <= finish;
+      minute += step
     ) {
-
       if (
-        !overlaps(
-          current,
-          current + duration
+        !overlapsAny(
+          minute,
+          minute + duration,
+          occupied
         )
       ) {
-
-        available.push(
-          toHHMM(current)
+        results.push(
+          toHHMM(minute)
         );
       }
     }
   }
 
-
-  return available;
+  return results;
 }
 
+/* =========================================================
+   TURNOS CONSECUTIVOS
+========================================================= */
+
+function buildConsecutivePlan(
+  db,
+  date,
+  barberId,
+  people,
+  requestedStart
+) {
+  if (
+    !Array.isArray(people) ||
+    !people.length ||
+    !requestedStart
+  ) {
+    return null;
+  }
+
+  let cursor =
+    toMinutes(requestedStart);
+
+  const plan = [];
+  const tentativeIntervals = [];
+
+  for (const originalPerson of people) {
+    const person = {
+      ...originalPerson
+    };
+
+    const duration =
+      Number(person.duration) ||
+      serviceDuration(
+        db,
+        person.serviceId
+      );
+
+    const start = cursor;
+    const end =
+      start + duration;
+
+    if (
+      !isIntervalAvailable(
+        db,
+        date,
+        barberId,
+        start,
+        duration,
+        tentativeIntervals
+      )
+    ) {
+      return null;
+    }
+
+    person.duration = duration;
+    person.time =
+      toHHMM(start);
+    person.endTime =
+      toHHMM(end);
+
+    plan.push(person);
+
+    tentativeIntervals.push({
+      start,
+      end
+    });
+
+    cursor = end;
+  }
+
+  return plan;
+}
+
+function findConsecutiveStarts(
+  db,
+  date,
+  barberId,
+  people
+) {
+  if (
+    !Array.isArray(people) ||
+    !people.length
+  ) {
+    return [];
+  }
+
+  const periods =
+    getSchedulePeriods(
+      db,
+      date,
+      barberId
+    );
+
+  const totalDuration =
+    duracionTotalPersonas(
+      people
+    );
+
+  const results = [];
+  const step = 5;
+
+  for (const [from, to] of periods) {
+    const periodStart =
+      toMinutes(from);
+
+    const periodEnd =
+      toMinutes(to);
+
+    for (
+      let minute = periodStart;
+      minute + totalDuration <=
+        periodEnd;
+      minute += step
+    ) {
+      const start =
+        toHHMM(minute);
+
+      const plan =
+        buildConsecutivePlan(
+          db,
+          date,
+          barberId,
+          people,
+          start
+        );
+
+      if (plan) {
+        results.push(start);
+      }
+    }
+  }
+
+  return results;
+}
 
 /* =========================================================
-   HORARIOS MÁS CERCANOS
+   TURNOS SEPARADOS
+========================================================= */
+
+function buildSeparatedPlan(
+  db,
+  date,
+  barberId,
+  people,
+  preferredStart = null
+) {
+  if (
+    !Array.isArray(people) ||
+    !people.length
+  ) {
+    return null;
+  }
+
+  const plan = [];
+  const tentativeIntervals = [];
+
+  let preferredMinutes =
+    preferredStart
+      ? toMinutes(preferredStart)
+      : null;
+
+  for (const originalPerson of people) {
+    const person = {
+      ...originalPerson
+    };
+
+    const duration =
+      Number(person.duration) ||
+      serviceDuration(
+        db,
+        person.serviceId
+      );
+
+    const periods =
+      getSchedulePeriods(
+        db,
+        date,
+        barberId
+      );
+
+    const candidates = [];
+    const step = 5;
+
+    for (const [from, to] of periods) {
+      const periodStart =
+        toMinutes(from);
+
+      const periodEnd =
+        toMinutes(to);
+
+      for (
+        let minute = periodStart;
+        minute + duration <=
+          periodEnd;
+        minute += step
+      ) {
+        if (
+          isIntervalAvailable(
+            db,
+            date,
+            barberId,
+            minute,
+            duration,
+            tentativeIntervals
+          )
+        ) {
+          candidates.push(minute);
+        }
+      }
+    }
+
+    if (!candidates.length) {
+      return null;
+    }
+
+    if (
+      preferredMinutes !== null
+    ) {
+      candidates.sort(
+        (a, b) =>
+          Math.abs(
+            a - preferredMinutes
+          ) -
+          Math.abs(
+            b - preferredMinutes
+          )
+      );
+    }
+
+    const selected =
+      candidates[0];
+
+    const end =
+      selected + duration;
+
+    person.duration = duration;
+    person.time =
+      toHHMM(selected);
+    person.endTime =
+      toHHMM(end);
+
+    plan.push(person);
+
+    tentativeIntervals.push({
+      start: selected,
+      end
+    });
+
+    /*
+     * La siguiente persona se intenta
+     * colocar después de la anterior,
+     * pero puede saltar a otro hueco.
+     */
+    preferredMinutes = end;
+  }
+
+  return plan;
+}
+
+/* =========================================================
+   OPCIONES CERCANAS
 ========================================================= */
 
 function nearestSlots(
@@ -727,92 +993,54 @@ function nearestSlots(
   requested,
   limit = 4
 ) {
+  if (!Array.isArray(slots)) {
+    return [];
+  }
+
+  if (!requested) {
+    return slots.slice(
+      0,
+      limit
+    );
+  }
 
   const target =
     toMinutes(requested);
 
-
   return [...slots]
+    .sort((a, b) => {
+      const distanceA =
+        Math.abs(
+          toMinutes(a) - target
+        );
 
-    .sort(
-      (a, b) => {
+      const distanceB =
+        Math.abs(
+          toMinutes(b) - target
+        );
 
-        const distanceA =
-          Math.abs(
-            toMinutes(a) -
-            target
-          );
-
-        const distanceB =
-          Math.abs(
-            toMinutes(b) -
-            target
-          );
-
-
-        /*
-          Primero elegimos el horario
-          con menor diferencia.
-        */
-        if (
-          distanceA !== distanceB
-        ) {
-          return (
-            distanceA -
-            distanceB
-          );
-        }
-
-
-        /*
-          Si dos horarios están
-          exactamente a la misma
-          distancia, mostramos primero
-          el más temprano.
-        */
+      if (
+        distanceA !== distanceB
+      ) {
         return (
-          toMinutes(a) -
-          toMinutes(b)
+          distanceA -
+          distanceB
         );
       }
-    )
 
+      return (
+        toMinutes(a) -
+        toMinutes(b)
+      );
+    })
     .slice(0, limit);
 }
 
-
 /* =========================================================
-   HORA DE FINALIZACIÓN
-========================================================= */
-
-function calculateEndTime(
-  db,
-  start,
-  serviceId,
-  cantidadPersonas
-) {
-
-  const duration =
-    reservationDuration(
-      db,
-      serviceId,
-      cantidadPersonas
-    );
-
-
-  return toHHMM(
-    toMinutes(start) +
-    duration
-  );
-}
-
-
-/* =========================================================
-   LISTA DE SERVICIOS
+   LISTADO Y DETECCIÓN DE SERVICIOS
 ========================================================= */
 
 function formatServiceList(db) {
-
   return db.services
     .map(
       (service, index) =>
@@ -821,225 +1049,1684 @@ function formatServiceList(db) {
     .join('\n');
 }
 
-/* =========================================================
-   API - CONFIGURACIÓN
-========================================================= */
+function serviceByOption(text, db) {
+  const value = String(text || '').trim();
 
-app.get('/api/config', (req, res) => {
-
-  const db = readDB();
-
-  res.json({
-    services: db.services,
-    barbers: db.barbers,
-    gallery: db.gallery
-  });
-});
-
-
-/* =========================================================
-   API - DISPONIBILIDAD
-========================================================= */
-
-app.get('/api/availability', (req, res) => {
-
-  const {
-    date,
-    barberId,
-    serviceId
-  } = req.query;
-
-
-  if (!date || !barberId) {
-
-    return res.status(400).json({
-      error:
-        'date y barberId son obligatorios'
-    });
+  if (!/^\d+$/.test(value)) {
+    return null;
   }
 
-
-  const slots = slotsFor(
-    date,
-    barberId,
-    serviceId || null
-  );
-
-
-  res.json({
-    date,
-    barberId,
-    serviceId: serviceId || null,
-    slots
-  });
-});
-
-
-/* =========================================================
-   API - VER RESERVAS
-========================================================= */
-
-app.get('/api/bookings', (req, res) => {
-
-  const db = readDB();
-
-  res.json(db.bookings);
-});
-
-
-/* =========================================================
-   API - CREAR RESERVA DESDE LA WEB
-========================================================= */
-
-app.post('/api/bookings', (req, res) => {
-
-  const {
-    name,
-    phone,
-    serviceId,
-    barberId,
-    date,
-    time,
-    source = 'web'
-  } = req.body;
-
+  const index = Number(value) - 1;
 
   if (
-    !name ||
-    !phone ||
-    !serviceId ||
-    !barberId ||
-    !date ||
-    !time
+    index < 0 ||
+    index >= db.services.length
   ) {
-
-    return res.status(400).json({
-      error:
-        'Faltan datos obligatorios'
-    });
+    return null;
   }
 
+  return db.services[index];
+}
 
-  /*
-    Antes de guardar comprobamos
-    nuevamente que la hora siga libre.
-  */
-  const available = slotsFor(
-    date,
-    barberId,
-    serviceId,
-    1
+function detectarServicioPersona(
+  text,
+  db
+) {
+  return (
+    serviceByOption(text, db) ||
+    findServiceFromText(text, db)
+  );
+}
+
+/* =========================================================
+   SERVICIOS POR PERSONA - LENGUAJE NATURAL
+========================================================= */
+
+function numeroOrdinal(text) {
+  const t = normalizar(text);
+
+  const values = {
+    primero: 1,
+    primera: 1,
+    uno: 1,
+    segundo: 2,
+    segunda: 2,
+    dos: 2,
+    tercero: 3,
+    tercera: 3,
+    tres: 3,
+    cuarto: 4,
+    cuarta: 4,
+    cuatro: 4,
+    quinto: 5,
+    quinta: 5,
+    cinco: 5,
+    sexto: 6,
+    sexta: 6,
+    seis: 6,
+    septimo: 7,
+    septima: 7,
+    siete: 7,
+    octavo: 8,
+    octava: 8,
+    ocho: 8,
+    noveno: 9,
+    novena: 9,
+    nueve: 9,
+    decimo: 10,
+    decima: 10,
+    diez: 10
+  };
+
+  for (
+    const [word, value]
+    of Object.entries(values)
+  ) {
+    if (
+      new RegExp(
+        `\\b${word}\\b`
+      ).test(t)
+    ) {
+      return value;
+    }
+  }
+
+  const numeric = t.match(
+    /\b(?:persona|turno)\s*(\d{1,2})\b/
   );
 
+  if (numeric) {
+    return Number(numeric[1]);
+  }
 
-  if (!available.includes(time)) {
+  return null;
+}
 
-    return res.status(409).json({
-      error:
-        'Ese horario acaba de ocuparse. Elige otro.'
+function splitPersonAssignments(text) {
+  const t = normalizar(text)
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  /*
+   * Divide frases del estilo:
+   * "el primero corte y barba y el segundo solo corte"
+   * sin romper "corte y barba".
+   */
+  const marker =
+    /\b(?:el|la)?\s*(primero|primera|segundo|segunda|tercero|tercera|cuarto|cuarta|quinto|quinta|sexto|sexta|septimo|septima|octavo|octava|noveno|novena|decimo|decima|persona\s*\d+|turno\s*\d+)\b/g;
+
+  const matches = [
+    ...t.matchAll(marker)
+  ];
+
+  if (!matches.length) {
+    return [];
+  }
+
+  const pieces = [];
+
+  for (
+    let i = 0;
+    i < matches.length;
+    i++
+  ) {
+    const current = matches[i];
+
+    const start =
+      current.index;
+
+    const end =
+      i + 1 < matches.length
+        ? matches[i + 1].index
+        : t.length;
+
+    pieces.push(
+      t.slice(start, end).trim()
+    );
+  }
+
+  return pieces;
+}
+
+function parsePersonAssignments(
+  text,
+  db,
+  cantidad
+) {
+  const pieces =
+    splitPersonAssignments(text);
+
+  if (!pieces.length) {
+    return null;
+  }
+
+  const assignments = [];
+
+  for (const piece of pieces) {
+    const index =
+      numeroOrdinal(piece);
+
+    const service =
+      findServiceFromText(
+        piece,
+        db
+      );
+
+    if (
+      !index ||
+      !service ||
+      index < 1 ||
+      index > cantidad
+    ) {
+      return null;
+    }
+
+    assignments.push({
+      index,
+      serviceId: service.id,
+      duration:
+        serviceDuration(
+          db,
+          service.id
+        )
     });
   }
 
+  const unique =
+    new Map();
 
-  const db = readDB();
+  for (
+    const assignment
+    of assignments
+  ) {
+    unique.set(
+      assignment.index,
+      assignment
+    );
+  }
 
+  if (
+    unique.size !== cantidad
+  ) {
+    return null;
+  }
+
+  const result = [];
+
+  for (
+    let index = 1;
+    index <= cantidad;
+    index++
+  ) {
+    const assignment =
+      unique.get(index);
+
+    if (!assignment) {
+      return null;
+    }
+
+    result.push({
+      index,
+      serviceId:
+        assignment.serviceId,
+      duration:
+        assignment.duration,
+      time: null,
+      endTime: null
+    });
+  }
+
+  return result;
+}
+
+function hasMultipleDifferentServices(
+  text,
+  db
+) {
+  const t = normalizar(text);
+
+  const found = [];
+
+  if (/\bcorte\b/.test(t)) {
+    found.push('corte');
+  }
+
+  if (/\bbarba\b/.test(t)) {
+    found.push('barba');
+  }
+
+  if (/\bdisen/.test(t)) {
+    found.push('diseno');
+  }
+
+  /*
+   * Una frase como "corte y barba"
+   * puede ser un paquete válido para una sola persona.
+   * Esta función se usa principalmente para detectar
+   * ambigüedad cuando existen varias personas.
+   */
+  return found.length > 1;
+}
+
+function aplicarServiciosAUnaPersona(
+  db,
+  personas,
+  personIndex,
+  service
+) {
+  const person =
+    personas.find(
+      p =>
+        p.index === personIndex
+    );
+
+  if (!person || !service) {
+    return false;
+  }
+
+  person.serviceId =
+    service.id;
+
+  person.duration =
+    serviceDuration(
+      db,
+      service.id
+    );
+
+  person.time = null;
+  person.endTime = null;
+
+  return true;
+}
+
+/* =========================================================
+   DESCRIPCIÓN DE PERSONAS
+========================================================= */
+
+function nombreServicio(
+  db,
+  serviceId
+) {
+  return (
+    db.services.find(
+      service =>
+        service.id === serviceId
+    )?.name || 'Servicio'
+  );
+}
+
+function descripcionPersonas(
+  db,
+  people = [],
+  includeTimes = false
+) {
+  return people
+    .map(person => {
+      const serviceName =
+        nombreServicio(
+          db,
+          person.serviceId
+        );
+
+      let line =
+        `👤 Turno ${person.index}: ${serviceName}`;
+
+      if (person.duration) {
+        line +=
+          ` · ${person.duration} min`;
+      }
+
+      if (
+        includeTimes &&
+        person.time &&
+        person.endTime
+      ) {
+        line +=
+          ` · ${formatHora(person.time)} – ${formatHora(person.endTime)}`;
+      }
+
+      return line;
+    })
+    .join('\n');
+}
+
+/* =========================================================
+   PLANES DE HORARIOS
+========================================================= */
+
+function planStart(plan = []) {
+  if (!plan.length) {
+    return null;
+  }
+
+  return plan[0].time || null;
+}
+
+function planEnd(plan = []) {
+  if (!plan.length) {
+    return null;
+  }
+
+  return (
+    plan[
+      plan.length - 1
+    ].endTime || null
+  );
+}
+
+function planIsConsecutive(
+  plan = []
+) {
+  if (plan.length <= 1) {
+    return true;
+  }
+
+  for (
+    let i = 1;
+    i < plan.length;
+    i++
+  ) {
+    if (
+      plan[i - 1].endTime !==
+      plan[i].time
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function clonePlan(plan = []) {
+  return plan.map(
+    person => ({
+      ...person
+    })
+  );
+}
+
+function samePlan(
+  a = [],
+  b = []
+) {
+  if (
+    a.length !== b.length
+  ) {
+    return false;
+  }
+
+  return a.every(
+    (person, index) =>
+      person.time ===
+        b[index]?.time &&
+      person.endTime ===
+        b[index]?.endTime &&
+      person.serviceId ===
+        b[index]?.serviceId
+  );
+}
+
+function formatPlanOption(
+  db,
+  plan,
+  label = null
+) {
+  const lines = [];
+
+  if (label) {
+    lines.push(label);
+  }
+
+  for (const person of plan) {
+    lines.push(
+      `Turno ${person.index}: ` +
+      `${nombreServicio(
+        db,
+        person.serviceId
+      )} · ` +
+      `${formatHora(
+        person.time
+      )} – ` +
+      `${formatHora(
+        person.endTime
+      )}`
+    );
+  }
+
+  return lines.join('\n');
+}
+
+/* =========================================================
+   GENERACIÓN DE OPCIONES DE GRUPO
+========================================================= */
+
+function generateGroupOptions(
+  db,
+  date,
+  barberId,
+  people,
+  requestedTime
+) {
+  const options = [];
+
+  /*
+   * OPCIÓN 1:
+   * Intentar exactamente la hora solicitada
+   * con todos los turnos consecutivos.
+   */
+  if (requestedTime) {
+    const exactConsecutive =
+      buildConsecutivePlan(
+        db,
+        date,
+        barberId,
+        people,
+        requestedTime
+      );
+
+    if (exactConsecutive) {
+      options.push({
+        type: 'consecutive',
+        plan:
+          exactConsecutive
+      });
+    }
+  }
+
+  /*
+   * OPCIONES CONSECUTIVAS CERCANAS.
+   */
+  const consecutiveStarts =
+    findConsecutiveStarts(
+      db,
+      date,
+      barberId,
+      people
+    );
+
+  const nearby =
+    nearestSlots(
+      consecutiveStarts,
+      requestedTime,
+      4
+    );
+
+  for (const start of nearby) {
+    const plan =
+      buildConsecutivePlan(
+        db,
+        date,
+        barberId,
+        people,
+        start
+      );
+
+    if (!plan) {
+      continue;
+    }
+
+    if (
+      !options.some(
+        option =>
+          samePlan(
+            option.plan,
+            plan
+          )
+      )
+    ) {
+      options.push({
+        type: 'consecutive',
+        plan
+      });
+    }
+  }
+
+  /*
+   * OPCIÓN SEPARADA:
+   * Si existen huecos individuales,
+   * se aprovechan aunque no formen
+   * un bloque continuo.
+   */
+  const separated =
+    buildSeparatedPlan(
+      db,
+      date,
+      barberId,
+      people,
+      requestedTime
+    );
+
+  if (
+    separated &&
+    !options.some(
+      option =>
+        samePlan(
+          option.plan,
+          separated
+        )
+    )
+  ) {
+    options.push({
+      type:
+        planIsConsecutive(
+          separated
+        )
+          ? 'consecutive'
+          : 'separated',
+      plan: separated
+    });
+  }
+
+  /*
+   * Máximo cuatro alternativas
+   * para no llenar WhatsApp.
+   */
+  return options.slice(0, 4);
+}
+
+function groupOptionsMessage(
+  db,
+  options
+) {
+  if (!options.length) {
+    return '';
+  }
+
+  return options
+    .map(
+      (option, index) => {
+        const title =
+          option.type ===
+          'separated'
+            ? `*${index + 1}. TURNOS SEPARADOS*`
+            : `*${index + 1}. TURNOS SEGUIDOS*`;
+
+        return formatPlanOption(
+          db,
+          option.plan,
+          title
+        );
+      }
+    )
+    .join('\n\n');
+}
+
+/* =========================================================
+   CANCELACIÓN Y CIERRE GLOBAL
+========================================================= */
+
+function esCancelarGlobal(text) {
+  const t =
+    normalizar(text);
+
+  return (
+    /\b(cancelar|cancela|cancelalo|cancelarla|cancelar reserva|cancelar cita|cancelar turno|salir)\b/.test(
+      t
+    ) ||
+    /\bya no quiero reservar\b/.test(
+      t
+    ) ||
+    /\bno quiero reservar\b/.test(
+      t
+    )
+  );
+}
+
+function esCierreSocial(text) {
+  const t =
+    normalizar(text);
+
+  return (
+    /\b(gracias|muchas gracias|eso es todo|nada mas|ya no necesito|no necesito mas|hasta luego|chao|adios|buen dia)\b/.test(
+      t
+    )
+  );
+}
+
+function esConfirmar(text) {
+  return (
+    normalizar(text).trim() ===
+    'confirmar'
+  );
+}
+
+function esEditar(text) {
+  const t =
+    normalizar(text);
+
+  return (
+    /\b(editar|modificar|cambiar)\b/.test(
+      t
+    )
+  );
+}
+
+/* =========================================================
+   SESIONES DE WHATSAPP
+========================================================= */
+
+const waSessions =
+  new Map();
+
+function resetSession(from) {
+  waSessions.delete(from);
+}
+
+function getSession(from) {
+  return (
+    waSessions.get(from) || {
+      step: 'idle',
+      data: {}
+    }
+  );
+}
+
+function saveSession(
+  from,
+  session
+) {
+  waSessions.set(
+    from,
+    session
+  );
+}
+
+function ensureBarber(
+  session,
+  db
+) {
+  const active =
+    db.barbers.filter(
+      barber =>
+        barber.active !== false
+    );
+
+  if (
+    !session.data.barberId &&
+    active.length === 1
+  ) {
+    session.data.barberId =
+      active[0].id;
+  }
+
+  return session;
+}
+
+/* =========================================================
+   CREAR / RECREAR PERSONAS DE SESIÓN
+========================================================= */
+
+function ensurePeople(
+  session,
+  db
+) {
+  const cantidad =
+    Math.max(
+      1,
+      Number(
+        session.data
+          .cantidadPersonas
+      ) || 1
+    );
+
+  if (
+    !Array.isArray(
+      session.data.people
+    ) ||
+    session.data.people.length !==
+      cantidad
+  ) {
+    session.data.people =
+      crearPersonas(
+        cantidad
+      );
+  }
+
+  /*
+   * Para una sola persona podemos
+   * reutilizar serviceId si ya se detectó.
+   */
+  if (
+    cantidad === 1 &&
+    session.data.serviceId
+  ) {
+    const person =
+      session.data.people[0];
+
+    person.serviceId =
+      session.data.serviceId;
+
+    actualizarDuracionPersona(
+      db,
+      person
+    );
+  }
+
+  return session.data.people;
+}
+
+/* =========================================================
+   SIGUIENTE PERSONA SIN SERVICIO
+========================================================= */
+
+function nextPersonWithoutService(
+  people = []
+) {
+  return (
+    people.find(
+      person =>
+        !person.serviceId
+    ) || null
+  );
+}
+
+/* =========================================================
+   MENSAJES DEL FLUJO
+========================================================= */
+
+function pedirCantidad(from, session) {
+  session.step = 'people';
+  saveSession(from, session);
+
+  return sendWhatsApp(
+    from,
+    '👥 ¿Cuántos turnos necesitas reservar?\n\n' +
+    'Puedes reservar de 1 a 10.'
+  );
+}
+
+function pedirServicioPersona(
+  from,
+  db,
+  session
+) {
+  const people =
+    ensurePeople(
+      session,
+      db
+    );
+
+  const person =
+    nextPersonWithoutService(
+      people
+    );
+
+  if (!person) {
+    return pedirSiguienteDato(
+      from,
+      db,
+      session
+    );
+  }
+
+  session.step =
+    'person_service';
+
+  session.data
+    .currentPersonIndex =
+    person.index;
+
+  saveSession(
+    from,
+    session
+  );
+
+  const cantidad =
+    session.data
+      .cantidadPersonas || 1;
+
+  let intro = '';
+
+  if (cantidad === 1) {
+    intro =
+      '✂️ ¿Qué servicio necesitas?\n\n';
+  } else {
+    intro =
+      `✂️ ¿Qué servicio necesita la persona ${person.index} de ${cantidad}?\n\n`;
+  }
+
+  return sendWhatsApp(
+    from,
+    intro +
+    formatServiceList(db) +
+    '\n\nPuedes responder con el número o escribir el servicio.'
+  );
+}
+
+function pedirFecha(
+  from,
+  session
+) {
+  session.step = 'date';
+  saveSession(from, session);
+
+  return sendWhatsApp(
+    from,
+    '📅 ¿Para qué día necesitas ' +
+    'la reserva?\n\n' +
+    'Puedes decir “hoy”, “mañana”, ' +
+    '“viernes” o escribir una fecha.'
+  );
+}
+
+function pedirBarbero(
+  from,
+  db,
+  session
+) {
+  const active =
+    db.barbers.filter(
+      barber =>
+        barber.active !== false
+    );
+
+  session.step = 'barber';
+  saveSession(from, session);
+
+  return sendWhatsApp(
+    from,
+    '💈 ¿Con qué barbero deseas reservar?\n\n' +
+    active
+      .map(
+        (barber, index) =>
+          `${index + 1}. ${barber.name}`
+      )
+      .join('\n')
+  );
+}
+
+function pedirHora(
+  from,
+  session
+) {
+  session.step = 'time';
+  delete session.data.lastGroupOptions;
+
+  saveSession(from, session);
+
+  return sendWhatsApp(
+    from,
+    '🕐 ¿A qué hora aproximadamente ' +
+    'te gustaría comenzar?\n\n' +
+    'Por ejemplo: “3 PM”, “4:10” o ' +
+    '“a las 5 de la tarde”.'
+  );
+}
+
+function pedirNombre(
+  from,
+  session
+) {
+  session.step = 'name';
+  saveSession(from, session);
+
+  return sendWhatsApp(
+    from,
+    'Perfecto 👌 ¿A nombre de quién ' +
+    'registro la reserva?'
+  );
+}
+
+/* =========================================================
+   APLICAR PLAN DE HORARIOS
+========================================================= */
+
+function aplicarPlan(
+  session,
+  plan
+) {
+  session.data.people =
+    clonePlan(plan);
+
+  session.data.time =
+    planStart(plan);
+
+  session.data.endTime =
+    planEnd(plan);
+
+  session.data.scheduleType =
+    planIsConsecutive(plan)
+      ? 'consecutive'
+      : 'separated';
+
+  delete session.data
+    .lastGroupOptions;
+
+  return session;
+}
+
+/* =========================================================
+   BUSCAR HORARIOS PARA LA RESERVA
+========================================================= */
+
+async function procesarHoraSolicitada(
+  from,
+  db,
+  session,
+  requestedTime
+) {
+  const people =
+    ensurePeople(
+      session,
+      db
+    );
+
+  if (
+    !todasPersonasConServicio(
+      people
+    )
+  ) {
+    return pedirServicioPersona(
+      from,
+      db,
+      session
+    );
+  }
+
+  const options =
+    generateGroupOptions(
+      db,
+      session.data.date,
+      session.data.barberId,
+      people,
+      requestedTime
+    );
+
+  if (!options.length) {
+    session.step = 'time';
+    session.data.requestedTime =
+      requestedTime;
+
+    saveSession(
+      from,
+      session
+    );
+
+    return sendWhatsApp(
+      from,
+      '😕 No encontré horarios suficientes ' +
+      'para completar todos los turnos ese día.\n\n' +
+      'Puedes decirme otra hora o escribir ' +
+      '“cambiar día”.'
+    );
+  }
+
+  /*
+   * Si el horario solicitado permite
+   * exactamente el plan consecutivo,
+   * lo tomamos directamente.
+   */
+  const exact =
+    options.find(
+      option =>
+        option.type ===
+          'consecutive' &&
+        planStart(
+          option.plan
+        ) === requestedTime
+    );
+
+  if (exact) {
+    aplicarPlan(
+      session,
+      exact.plan
+    );
+
+    session.step = 'flow';
+
+    saveSession(
+      from,
+      session
+    );
+
+    return pedirSiguienteDato(
+      from,
+      db,
+      session
+    );
+  }
+
+  /*
+   * Si no cabe exactamente, mostramos
+   * opciones seguidas y/o separadas.
+   */
+  session.step =
+    'group_options';
+
+  session.data.requestedTime =
+    requestedTime;
+
+  session.data.lastGroupOptions =
+    options;
+
+  saveSession(
+    from,
+    session
+  );
+
+  return sendWhatsApp(
+    from,
+    `A las ${formatHora(
+      requestedTime
+    )} no puedo completar todos los turnos ` +
+    'exactamente como los pediste.\n\n' +
+    'Estas son las mejores opciones disponibles:\n\n' +
+    groupOptionsMessage(
+      db,
+      options
+    ) +
+    '\n\nResponde con el número de la opción que prefieras.'
+  );
+}
+
+/* =========================================================
+   SIGUIENTE DATO DEL FLUJO
+========================================================= */
+
+async function pedirSiguienteDato(
+  from,
+  db,
+  session
+) {
+  const cantidad =
+    Number(
+      session.data
+        .cantidadPersonas
+    ) || 0;
+
+  if (!cantidad) {
+    return pedirCantidad(
+      from,
+      session
+    );
+  }
+
+  ensurePeople(
+    session,
+    db
+  );
+
+  if (
+    !todasPersonasConServicio(
+      session.data.people
+    )
+  ) {
+    return pedirServicioPersona(
+      from,
+      db,
+      session
+    );
+  }
+
+  if (!session.data.date) {
+    return pedirFecha(
+      from,
+      session
+    );
+  }
+
+  ensureBarber(
+    session,
+    db
+  );
+
+  if (!session.data.barberId) {
+    return pedirBarbero(
+      from,
+      db,
+      session
+    );
+  }
+
+  const peopleHaveTimes =
+    session.data.people.every(
+      person =>
+        person.time &&
+        person.endTime
+    );
+
+  if (!peopleHaveTimes) {
+    if (
+      session.data.requestedTime
+    ) {
+      return procesarHoraSolicitada(
+        from,
+        db,
+        session,
+        session.data
+          .requestedTime
+      );
+    }
+
+    return pedirHora(
+      from,
+      session
+    );
+  }
+
+  if (!session.data.name) {
+    return pedirNombre(
+      from,
+      session
+    );
+  }
+
+  return mostrarResumen(
+    from,
+    db,
+    session
+  );
+}
+
+/* =========================================================
+   RESUMEN FINAL
+========================================================= */
+
+function mostrarResumen(
+  from,
+  db,
+  session
+) {
+  const barberName =
+    db.barbers.find(
+      barber =>
+        barber.id ===
+        session.data.barberId
+    )?.name || 'Master';
+
+  const people =
+    session.data.people || [];
+
+  const scheduleLabel =
+    planIsConsecutive(
+      people
+    )
+      ? 'Turnos seguidos'
+      : 'Turnos separados';
+
+  session.step = 'confirm';
+
+  saveSession(
+    from,
+    session
+  );
+
+  return sendWhatsApp(
+    from,
+    '📋 *Resumen de tu reserva*\n\n' +
+    `👤 Nombre: ${session.data.name}\n` +
+    `👥 Turnos: ${people.length}\n` +
+    `💈 Barbero: ${barberName}\n` +
+    `📅 Fecha: ${session.data.date}\n` +
+    `🗓️ Modalidad: ${scheduleLabel}\n\n` +
+    descripcionPersonas(
+      db,
+      people,
+      true
+    ) +
+    '\n\n¿Qué deseas hacer?\n' +
+    '✅ *CONFIRMAR* — guardar la reserva\n' +
+    '✏️ *EDITAR* — modificarla\n' +
+    '❌ *CANCELAR* — cancelar el proceso'
+  );
+}
+
+/* =========================================================
+   REVALIDACIÓN ANTES DE GUARDAR
+========================================================= */
+
+function planStillAvailable(
+  db,
+  date,
+  barberId,
+  people
+) {
+  const tentative = [];
+
+  for (const person of people) {
+    if (
+      !person.time ||
+      !person.endTime ||
+      !person.serviceId
+    ) {
+      return false;
+    }
+
+    const start =
+      toMinutes(
+        person.time
+      );
+
+    const duration =
+      Number(
+        person.duration
+      ) ||
+      serviceDuration(
+        db,
+        person.serviceId
+      );
+
+    if (
+      !isIntervalAvailable(
+        db,
+        date,
+        barberId,
+        start,
+        duration,
+        tentative
+      )
+    ) {
+      return false;
+    }
+
+    tentative.push({
+      start,
+      end:
+        start + duration
+    });
+  }
+
+  return true;
+}
+
+/* =========================================================
+   GUARDAR RESERVA DE WHATSAPP
+========================================================= */
+
+function crearBookingDesdeSesion(
+  db,
+  from,
+  session
+) {
+  const people =
+    clonePlan(
+      session.data.people || []
+    );
+
+  const first =
+    people[0];
 
   const booking = {
-
     id: `BK-${Date.now()}`,
+    name:
+      session.data.name,
+    phone: from,
 
-    name,
+    /*
+     * Estos campos se mantienen para
+     * compatibilidad con el panel y
+     * funciones anteriores.
+     */
+    serviceId:
+      first?.serviceId || null,
 
-    phone,
+    cantidadPersonas:
+      people.length || 1,
 
-    serviceId,
+    barberId:
+      session.data.barberId,
 
-    barberId,
+    date:
+      session.data.date,
 
-    date,
-
-    time,
-
-    cantidadPersonas: 1,
+    time:
+      first?.time || null,
 
     endTime:
-      calculateEndTime(
-        db,
-        time,
-        serviceId,
-        1
-      ),
+      planEnd(people),
 
-    source,
+    /*
+     * Nuevo detalle completo.
+     */
+    people,
 
+    scheduleType:
+      planIsConsecutive(
+        people
+      )
+        ? 'consecutive'
+        : 'separated',
+
+    source: 'whatsapp',
     status: 'confirmed',
-
     createdAt:
       new Date().toISOString()
   };
 
+  return booking;
+}
 
-  db.bookings.push(booking);
+function confirmacionBooking(
+  db,
+  booking
+) {
+  const barberName =
+    db.barbers.find(
+      barber =>
+        barber.id ===
+        booking.barberId
+    )?.name || 'Master';
 
-  writeDB(db);
+  const modalidad =
+    booking.scheduleType ===
+      'separated'
+      ? 'Turnos separados'
+      : 'Turnos seguidos';
 
-
-  res.status(201).json(
-    booking
+  return (
+    '✅ *¡Reserva confirmada!*\n\n' +
+    `👤 ${booking.name}\n` +
+    `👥 ${booking.people.length} turno${
+      booking.people.length === 1
+        ? ''
+        : 's'
+    }\n` +
+    `💈 ${barberName}\n` +
+    `📅 ${booking.date}\n` +
+    `🗓️ ${modalidad}\n\n` +
+    descripcionPersonas(
+      db,
+      booking.people,
+      true
+    ) +
+    '\n\n' +
+    `Código: ${booking.id}\n\n` +
+    'Cuando necesites otra reserva, ' +
+    'escríbeme “quiero reservar”. 💈'
   );
-});
-
+}
 
 /* =========================================================
-   API - ACTUALIZAR RESERVA
+   EDICIÓN
 ========================================================= */
+
+function campoEditar(text) {
+  const t =
+    normalizar(text);
+
+  if (
+    /\b(dia|fecha)\b/.test(t)
+  ) {
+    return 'date';
+  }
+
+  if (
+    /\b(hora|horario)\b/.test(t)
+  ) {
+    return 'time';
+  }
+
+  if (
+    /\b(servicio|servicios|corte|barba|diseno)\b/.test(
+      t
+    )
+  ) {
+    return 'service';
+  }
+
+  if (
+    /\b(persona|personas|turno|turnos|cantidad)\b/.test(
+      t
+    )
+  ) {
+    return 'people';
+  }
+
+  if (
+    /\b(barbero|barbera)\b/.test(
+      t
+    )
+  ) {
+    return 'barber';
+  }
+
+  if (
+    /\bnombre\b/.test(t)
+  ) {
+    return 'name';
+  }
+
+  return null;
+}
+
+function limpiarHorarios(
+  session
+) {
+  if (
+    Array.isArray(
+      session.data.people
+    )
+  ) {
+    for (
+      const person
+      of session.data.people
+    ) {
+      person.time = null;
+      person.endTime = null;
+    }
+  }
+
+  session.data.time = null;
+  session.data.endTime = null;
+
+  delete session.data
+    .lastGroupOptions;
+
+  return session;
+}
+
+/* =========================================================
+   RUTAS API DE LA WEB
+========================================================= */
+
+app.get(
+  '/api/config',
+  (req, res) => {
+    const db = readDB();
+
+    res.json({
+      services: db.services,
+      barbers: db.barbers,
+      gallery: db.gallery
+    });
+  }
+);
+
+app.get(
+  '/api/bookings',
+  (req, res) => {
+    res.json(
+      readDB().bookings
+    );
+  }
+);
+
+app.get(
+  '/api/availability',
+  (req, res) => {
+    const {
+      date,
+      barberId,
+      serviceId
+    } = req.query;
+
+    if (
+      !date ||
+      !barberId ||
+      !serviceId
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'date, barberId y serviceId son obligatorios'
+        });
+    }
+
+    const db = readDB();
+
+    const duration =
+      serviceDuration(
+        db,
+        serviceId
+      );
+
+    const slots =
+      availableStartsForDuration(
+        db,
+        date,
+        barberId,
+        duration
+      );
+
+    res.json({
+      date,
+      barberId,
+      serviceId,
+      slots
+    });
+  }
+);
+
+app.post(
+  '/api/bookings',
+  (req, res) => {
+    const {
+      name,
+      phone,
+      serviceId,
+      barberId,
+      date,
+      time,
+      source = 'web'
+    } = req.body;
+
+    if (
+      !name ||
+      !phone ||
+      !serviceId ||
+      !barberId ||
+      !date ||
+      !time
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Faltan datos obligatorios'
+        });
+    }
+
+    const db = readDB();
+
+    const duration =
+      serviceDuration(
+        db,
+        serviceId
+      );
+
+    const available =
+      isIntervalAvailable(
+        db,
+        date,
+        barberId,
+        toMinutes(time),
+        duration
+      );
+
+    if (!available) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'Ese horario acaba de ocuparse. Elige otro.'
+        });
+    }
+
+    const endTime =
+      toHHMM(
+        toMinutes(time) +
+        duration
+      );
+
+    const booking = {
+      id: `BK-${Date.now()}`,
+      name,
+      phone,
+      serviceId,
+      barberId,
+      date,
+      time,
+      endTime,
+      cantidadPersonas: 1,
+      people: [
+        {
+          index: 1,
+          serviceId,
+          duration,
+          time,
+          endTime
+        }
+      ],
+      scheduleType:
+        'consecutive',
+      source,
+      status: 'confirmed',
+      createdAt:
+        new Date().toISOString()
+    };
+
+    db.bookings.push(
+      booking
+    );
+
+    writeDB(db);
+
+    return res
+      .status(201)
+      .json(booking);
+  }
+);
 
 app.patch(
   '/api/bookings/:id',
   (req, res) => {
-
     const db = readDB();
 
     const booking =
       db.bookings.find(
         item =>
-          item.id === req.params.id
+          item.id ===
+          req.params.id
       );
 
-
     if (!booking) {
-
-      return res.status(404).json({
-        error:
-          'Reserva no encontrada'
-      });
+      return res
+        .status(404)
+        .json({
+          error:
+            'Reserva no encontrada'
+        });
     }
-
 
     Object.assign(
       booking,
       req.body
     );
 
-
     writeDB(db);
 
-
-    res.json(
-      booking
-    );
+    res.json(booking);
   }
 );
 
-
 /* =========================================================
-   WHATSAPP - VERIFICACIÓN DEL WEBHOOK
+   VERIFICACIÓN WEBHOOK WHATSAPP
 ========================================================= */
 
 app.get(
   '/webhooks/whatsapp',
   (req, res) => {
-
     const mode =
       req.query['hub.mode'];
 
@@ -1053,33 +2740,29 @@ app.get(
         'hub.challenge'
       ];
 
-
     if (
       mode === 'subscribe' &&
       token ===
-        process.env.WHATSAPP_VERIFY_TOKEN
+        process.env
+          .WHATSAPP_VERIFY_TOKEN
     ) {
-
       return res
         .status(200)
         .send(challenge);
     }
 
-
-    res.sendStatus(403);
+    return res.sendStatus(403);
   }
 );
 
-
 /* =========================================================
-   WHATSAPP - ENVIAR MENSAJES
+   ENVIAR MENSAJES WHATSAPP
 ========================================================= */
 
 async function sendWhatsApp(
   to,
   body
 ) {
-
   const token =
     process.env.WHATSAPP_TOKEN;
 
@@ -1092,14 +2775,10 @@ async function sendWhatsApp(
       .WHATSAPP_GRAPH_VERSION ||
     'v23.0';
 
-
-  /*
-    Si las variables no existen,
-    dejamos registro en consola
-    para facilitar pruebas.
-  */
-  if (!token || !phoneId) {
-
+  if (
+    !token ||
+    !phoneId
+  ) {
     console.log(
       '[DEMO WhatsApp]',
       to,
@@ -1109,32 +2788,22 @@ async function sendWhatsApp(
     return;
   }
 
-
   const response =
     await fetch(
       `https://graph.facebook.com/${version}/${phoneId}/messages`,
       {
-
         method: 'POST',
-
         headers: {
-
           Authorization:
             `Bearer ${token}`,
-
           'Content-Type':
             'application/json'
         },
-
         body: JSON.stringify({
-
           messaging_product:
             'whatsapp',
-
           to,
-
           type: 'text',
-
           text: {
             body
           }
@@ -1142,1490 +2811,855 @@ async function sendWhatsApp(
       }
     );
 
-
   if (!response.ok) {
+    const errorText =
+      await response.text();
 
     console.error(
-      'WhatsApp send error:',
+      'Error enviando WhatsApp:',
       response.status,
-      await response.text()
+      errorText
     );
   }
 }
 
-
 /* =========================================================
-   SESIONES DE CONVERSACIÓN
-========================================================= */
-
-const waSessions =
-  new Map();
-
-
-function resetSession(from) {
-
-  waSessions.set(
-    from,
-    {
-      step: 'idle',
-      data: {}
-    }
-  );
-}
-
-
-/*
-  Si solamente existe un barbero
-  activo, lo seleccionamos
-  automáticamente.
-*/
-function ensureBarber(
-  session,
-  db
-) {
-
-  const activeBarbers =
-    db.barbers.filter(
-      barber =>
-        barber.active !== false
-    );
-
-
-  if (
-    !session.data.barberId &&
-    activeBarbers.length === 1
-  ) {
-
-    session.data.barberId =
-      activeBarbers[0].id;
-  }
-}
-
-
-/* =========================================================
-   MENSAJE PARA ELEGIR SERVICIO
-========================================================= */
-
-function askServices(
-  from,
-  db,
-  cantidad
-) {
-
-  return sendWhatsApp(
-
-    from,
-
-    `Perfecto 👌 Entendí que necesitas ${cantidad} ${
-      cantidad === 1
-        ? 'turno'
-        : 'turnos'
-    }.\n\n` +
-
-    `✂️ ¿Qué servicio necesitan?\n\n` +
-
-    formatServiceList(db)
-  );
-}
-
-/* =========================================================
-   WHATSAPP - RECIBIR MENSAJES
+   WEBHOOK PRINCIPAL DE WHATSAPP
 ========================================================= */
 
 app.post(
   '/webhooks/whatsapp',
   async (req, res) => {
-
     console.log(
       'WEBHOOK WHATSAPP RECIBIDO'
     );
 
     /*
-      Respondemos inmediatamente a Meta
-      para evitar reintentos del webhook.
-    */
+     * Respondemos rápido a Meta para evitar
+     * reintentos del mismo mensaje.
+     */
     res.sendStatus(200);
 
-
     try {
-
       const value =
-        req.body
-          ?.entry?.[0]
-          ?.changes?.[0]
-          ?.value;
+        req.body?.entry?.[0]
+          ?.changes?.[0]?.value;
 
+      const msg =
+        value?.messages?.[0];
 
-      const message =
-        value
-          ?.messages?.[0];
-
-
-      /*
-        Si el webhook recibido no contiene
-        un mensaje del cliente, terminamos.
-      */
-      if (!message) {
+      if (!msg) {
         return;
       }
 
-
-      const from =
-        message.from;
-
+      const from = msg.from;
 
       const text =
         (
-          message.text?.body ||
-          ''
+          msg.text?.body || ''
         ).trim();
 
-
-      /*
-        Por ahora trabajamos con mensajes
-        escritos.
-      */
       if (!text) {
-
         return sendWhatsApp(
           from,
-          'Por ahora puedo ayudarte por texto. 💈'
+          'Por ahora puedo ayudarte por texto. ' +
+          'Escríbeme qué necesitas reservar. 💈'
         );
       }
-
 
       const lower =
         normalizar(text);
 
-
-      const db =
-        readDB();
-
+      const db = readDB();
 
       let session =
-        waSessions.get(from) ||
-        {
-          step: 'idle',
-          data: {}
-        };
-
+        getSession(from);
 
       /* =====================================================
-         FINALIZAR CONVERSACIÓN
+         CANCELAR DESDE CUALQUIER PUNTO
       ===================================================== */
 
-      const closingIntent =
-        /(gracias|muchas gracias|eso es todo|nada mas|ya no necesito|no necesito mas|hasta luego|chao|adios|buen dia)/i;
-
-
       if (
-        closingIntent.test(lower)
+        esCancelarGlobal(text)
       ) {
-
         resetSession(from);
-
 
         return sendWhatsApp(
           from,
+          '❌ Listo. El proceso de reserva quedó cancelado.\n\n' +
+          'No se guardó ninguna cita. Cuando quieras comenzar otra, ' +
+          'escríbeme “quiero reservar”. 💈'
+        );
+      }
 
+      /* =====================================================
+         CIERRE SOCIAL
+      ===================================================== */
+
+      if (
+        esCierreSocial(text) &&
+        session.step !==
+          'confirm'
+      ) {
+        resetSession(from);
+
+        return sendWhatsApp(
+          from,
           '😊 ¡Con gusto! Fue un placer atenderte.\n\n' +
           'Cuando necesites otra cita, escríbeme “quiero reservar”. 💈'
         );
       }
 
-
       /* =====================================================
-         PASO: CONFIRMAR RESERVA
+         CONFIRMACIÓN FINAL
       ===================================================== */
 
       if (
-        session.step === 'confirm'
+        session.step ===
+        'confirm'
       ) {
-
-        const answer =
-          lower.trim();
-
-
-        /* -----------------------------
-           CANCELAR
-        ----------------------------- */
-
         if (
-          answer === 'cancelar'
+          esEditar(text)
         ) {
-
-          resetSession(from);
-
-
-          return sendWhatsApp(
-            from,
-
-            '❌ Reserva cancelada. No se ha guardado ninguna cita.'
-          );
-        }
-
-
-        /* -----------------------------
-           EDITAR HORA
-        ----------------------------- */
-
-        if (
-          answer === 'editar' ||
-          answer.includes(
-            'editar la hora'
-          ) ||
-          answer.includes(
-            'cambiar hora'
-          )
-        ) {
-
           session.step =
-            'time';
+            'edit';
 
-          session.data.time =
-            null;
+          delete session.data
+            .editField;
 
-          session.data.endTime =
-            null;
-
-
-          waSessions.set(
+          saveSession(
             from,
             session
           );
 
+          const directField =
+            campoEditar(text);
 
-          return sendWhatsApp(
-            from,
-
-            '✏️ Perfecto. ¿A qué hora aproximadamente deseas comenzar?'
-          );
-        }
-
-
-        /*
-          Si no escribió ninguna
-          de las tres opciones.
-        */
-        if (
-          answer !== 'confirmar'
-        ) {
-
-          return sendWhatsApp(
-            from,
-
-            'Elige una opción:\n\n' +
-
-            '✅ *CONFIRMAR*\n' +
-            '✏️ *EDITAR*\n' +
-            '❌ *CANCELAR*'
-          );
-        }
-
-
-        /* -----------------------------
-           VERIFICAR DISPONIBILIDAD
-           UNA ÚLTIMA VEZ
-        ----------------------------- */
-
-        const available =
-          slotsFor(
-
-            session.data.date,
-
-            session.data.barberId,
-
-            session.data.serviceId,
-
+          if (directField) {
             session.data
-              .cantidadPersonas
-          );
+              .editField =
+              directField;
 
-
-        /*
-          Puede ocurrir que otra persona
-          reserve mientras el cliente
-          estaba confirmando.
-
-          Por eso verificamos nuevamente.
-        */
-        if (
-          !available.includes(
-            session.data.time
-          )
-        ) {
-
-          const nearby =
-            nearestSlots(
-
-              available,
-
-              session.data.time,
-
-              4
+            saveSession(
+              from,
+              session
             );
 
-
-          session.step =
-            'time';
-
-          session.data.time =
-            null;
-
-          session.data.endTime =
-            null;
-
-
-          waSessions.set(
-            from,
-            session
-          );
-
-
-          if (
-            nearby.length
-          ) {
-
-            return sendWhatsApp(
+            return pedirCampoEdicion(
               from,
-
-              '⚠️ Ese horario acaba de ocuparse.\n\n' +
-
-              'Los horarios disponibles más cercanos son:\n' +
-
-              nearby
-                .map(
-                  (slot, index) =>
-                    `${index + 1}. ${slot}`
-                )
-                .join('\n') +
-
-              '\n\nEscribe la hora que prefieras.'
+              db,
+              session,
+              directField
             );
           }
 
-
           return sendWhatsApp(
             from,
-
-            '⚠️ Ya no tengo un bloque suficiente ese día. ¿Quieres probar con otra fecha?'
+            '✏️ Claro. ¿Qué deseas editar?\n\n' +
+            'Puedes escribir:\n' +
+            '• día\n' +
+            '• hora\n' +
+            '• servicio\n' +
+            '• personas\n' +
+            '• barbero\n' +
+            '• nombre'
           );
         }
 
+        if (
+          !esConfirmar(text)
+        ) {
+          return sendWhatsApp(
+            from,
+            'Responde *CONFIRMAR*, *EDITAR* o *CANCELAR* para continuar.'
+          );
+        }
 
-        /* -----------------------------
-           GUARDAR RESERVA
-        ----------------------------- */
-
-        const freshDB =
+        /*
+         * Volvemos a leer la base justo
+         * antes de guardar para evitar
+         * dobles reservas.
+         */
+        const fresh =
           readDB();
 
+        const people =
+          session.data.people || [];
 
-        const booking = {
-
-          id:
-            `BK-${Date.now()}`,
-
-          name:
-            session.data.name,
-
-          phone:
-            from,
-
-          serviceId:
-            session.data.serviceId,
-
-          cantidadPersonas:
-            session.data
-              .cantidadPersonas,
-
-          barberId:
-            session.data.barberId,
-
-          date:
+        if (
+          !planStillAvailable(
+            fresh,
             session.data.date,
+            session.data.barberId,
+            people
+          )
+        ) {
+          limpiarHorarios(
+            session
+          );
 
-          time:
-            session.data.time,
+          session.data
+            .requestedTime =
+            null;
 
-          endTime:
-            session.data.endTime,
+          session.step =
+            'time';
 
-          source:
-            'whatsapp',
+          saveSession(
+            from,
+            session
+          );
 
-          status:
-            'confirmed',
+          return sendWhatsApp(
+            from,
+            '⚠️ Uno de esos horarios acaba de ocuparse antes de confirmar.\n\n' +
+            'Dime otra hora y buscaré nuevamente opciones para todos los turnos.'
+          );
+        }
 
-          createdAt:
-            new Date()
-              .toISOString()
-        };
+        const booking =
+          crearBookingDesdeSesion(
+            fresh,
+            from,
+            session
+          );
 
-
-        freshDB.bookings.push(
+        fresh.bookings.push(
           booking
         );
 
+        writeDB(fresh);
 
-        writeDB(
-          freshDB
-        );
-
-
-        const serviceName =
-          freshDB.services.find(
-            service =>
-              service.id ===
-              booking.serviceId
-          )?.name ||
-          'Servicio';
-
-
-        const barberName =
-          freshDB.barbers.find(
-            barber =>
-              barber.id ===
-              booking.barberId
-          )?.name ||
-          'Master';
-
-
-        /*
-          Terminamos la sesión para que
-          el próximo mensaje pueda iniciar
-          una reserva completamente nueva.
-        */
         resetSession(from);
 
-
         return sendWhatsApp(
           from,
-
-          '✅ *¡Reserva confirmada!*\n\n' +
-
-          `👤 ${booking.name}\n` +
-
-          `👥 ${booking.cantidadPersonas} ${
-            booking.cantidadPersonas === 1
-              ? 'turno'
-              : 'turnos'
-          }\n` +
-
-          `✂️ ${serviceName}\n` +
-
-          `💈 ${barberName}\n` +
-
-          `📅 ${booking.date}\n` +
-
-          `🕐 Inicio: ${booking.time}\n` +
-
-          `🏁 Final aprox.: ${booking.endTime}\n\n` +
-
-          `Código: ${booking.id}`
-        );
-      }
-
-
-      /* =====================================================
-         PASO: NOMBRE DEL CLIENTE
-      ===================================================== */
-
-      if (
-        session.step === 'name'
-      ) {
-
-        /*
-          Guardamos el nombre escrito
-          por el cliente.
-        */
-        session.data.name =
-          text;
-
-
-        const serviceName =
-          db.services.find(
-            service =>
-              service.id ===
-              session.data.serviceId
-          )?.name ||
-          'Servicio';
-
-
-        const barberName =
-          db.barbers.find(
-            barber =>
-              barber.id ===
-              session.data.barberId
-          )?.name ||
-          'Master';
-
-
-        /*
-          Calculamos a qué hora terminará
-          aproximadamente toda la reserva.
-        */
-        session.data.endTime =
-          calculateEndTime(
-
-            db,
-
-            session.data.time,
-
-            session.data.serviceId,
-
-            session.data
-              .cantidadPersonas
-          );
-
-
-        session.step =
-          'confirm';
-
-
-        waSessions.set(
-          from,
-          session
-        );
-
-
-        return sendWhatsApp(
-          from,
-
-          '📋 *Resumen de tu reserva*\n\n' +
-
-          `👤 ${session.data.name}\n` +
-
-          `👥 ${session.data.cantidadPersonas} ${
-            session.data.cantidadPersonas === 1
-              ? 'turno'
-              : 'turnos'
-          }\n` +
-
-          `✂️ ${serviceName}\n` +
-
-          `💈 ${barberName}\n` +
-
-          `📅 ${session.data.date}\n` +
-
-          `🕐 Inicio: ${session.data.time}\n` +
-
-          `🏁 Final aprox.: ${session.data.endTime}\n\n` +
-
-          '¿Está todo correcto?\n\n' +
-
-          '✅ Escribe *CONFIRMAR* para reservar\n' +
-
-          '✏️ Escribe *EDITAR* para cambiar la hora\n' +
-
-          '❌ Escribe *CANCELAR* para cancelar'
-        );
-      }
-
-
-      /* =====================================================
-         PASO: ELEGIR HORA
-      ===================================================== */
-
-      if (
-        session.step === 'time'
-      ) {
-
-        ensureBarber(
-          session,
-          db
-        );
-
-
-        /*
-          Si previamente mostramos una
-          lista numerada de horarios
-          cercanos, permitimos responder:
-
-          1
-          2
-          3
-          4
-
-          SIN confundir ese número con
-          1pm, 2pm, 3pm o 4pm.
-        */
-        const optionNumber =
-          /^\d+$/.test(text.trim())
-            ? Number(text.trim())
-            : null;
-
-
-        let requested = null;
-
-
-        if (
-          optionNumber &&
-          Array.isArray(
-            session.data.lastNearby
-          ) &&
-          optionNumber >= 1 &&
-          optionNumber <=
-            session.data.lastNearby.length
-        ) {
-
-          requested =
-            session.data.lastNearby[
-              optionNumber - 1
-            ];
-
-
-          session.data.lastNearby =
-            null;
-        }
-
-        else {
-
-          requested =
-            extractRequestedTime(
-              text
-            );
-        }
-
-
-        /*
-          No pudimos entender la hora.
-        */
-        if (!requested) {
-
-          return sendWhatsApp(
-            from,
-
-            '🕐 Dime una hora, por ejemplo: “2 de la tarde”, “3:30 pm” o “10 de la mañana”.'
-          );
-        }
-
-
-        const available =
-          slotsFor(
-
-            session.data.date,
-
-            session.data.barberId,
-
-            session.data.serviceId,
-
-            session.data
-              .cantidadPersonas
-          );
-
-
-        /*
-          La hora exacta solicitada
-          no está disponible.
-        */
-        if (
-          !available.includes(
-            requested
+          confirmacionBooking(
+            fresh,
+            booking
           )
+        );
+      }
+
+      /* =====================================================
+         FLUJO DE EDICIÓN
+      ===================================================== */
+
+      if (
+        session.step ===
+        'edit'
+      ) {
+        if (
+          !session.data.editField
         ) {
+          const field =
+            campoEditar(text);
 
-          const nearby =
-            nearestSlots(
-
-              available,
-
-              requested,
-
-              4
-            );
-
-
-          /*
-            Guardamos temporalmente
-            las opciones para permitir
-            que el cliente responda
-            simplemente 1, 2, 3 o 4.
-          */
-          session.data.lastNearby =
-            nearby;
-
-
-          waSessions.set(
-            from,
-            session
-          );
-
-
-          if (
-            !nearby.length
-          ) {
-
+          if (!field) {
             return sendWhatsApp(
               from,
-
-              `😕 No tengo un bloque suficiente para ${session.data.cantidadPersonas} ${
-                session.data.cantidadPersonas === 1
-                  ? 'turno'
-                  : 'turnos'
-              } ese día.\n\n` +
-
-              '¿Quieres probar con otra fecha?'
+              'Dime qué deseas cambiar: ' +
+              '*día*, *hora*, *servicio*, *personas*, *barbero* o *nombre*.'
             );
           }
 
+          session.data.editField =
+            field;
 
-          return sendWhatsApp(
-            from,
-
-            `A las ${requested} no tengo disponible todo el bloque necesario para ${session.data.cantidadPersonas} ${
-              session.data.cantidadPersonas === 1
-                ? 'turno'
-                : 'turnos'
-            }.\n\n` +
-
-            'Los horarios disponibles más cercanos son:\n' +
-
-            nearby
-              .map(
-                (slot, index) =>
-                  `${index + 1}. ${slot}`
-              )
-              .join('\n') +
-
-            '\n\nPuedes escribir el número de la opción o la hora que prefieras.'
-          );
-        }
-
-
-        /*
-          La hora está disponible.
-        */
-        session.data.time =
-          requested;
-
-
-        session.data.endTime =
-          calculateEndTime(
-
-            db,
-
-            requested,
-
-            session.data.serviceId,
-
-            session.data
-              .cantidadPersonas
-          );
-
-
-        session.data.lastNearby =
-          null;
-
-
-        session.step =
-          'name';
-
-
-        waSessions.set(
-          from,
-          session
-        );
-
-
-        return sendWhatsApp(
-          from,
-
-          '✅ Perfecto. Tengo disponible todo el bloque.\n\n' +
-
-          `🕐 Inicio: ${session.data.time}\n` +
-
-          `🏁 Final aprox.: ${session.data.endTime}\n\n` +
-
-          '👤 ¿A nombre de quién registro la reserva?'
-        );
-      }
-
-          /* =====================================================
-         PASO: ELEGIR FECHA
-      ===================================================== */
-
-      if (
-        session.step === 'date'
-      ) {
-
-        const date =
-          dateFromSpanish(text);
-
-
-        if (!date) {
-
-          return sendWhatsApp(
-            from,
-
-            '📅 Dime el día. Puedes decir “hoy”, “mañana”, “viernes” o escribir una fecha.'
-          );
-        }
-
-
-        session.data.date =
-          date;
-
-
-        ensureBarber(
-          session,
-          db
-        );
-
-
-        session.step =
-          'time';
-
-
-        waSessions.set(
-          from,
-          session
-        );
-
-
-        return sendWhatsApp(
-          from,
-
-          `📅 Perfecto, ${date}.\n\n` +
-          '🕐 ¿A qué hora aproximadamente deseas comenzar?'
-        );
-      }
-
-
-      /* =====================================================
-         PASO: ELEGIR SERVICIO
-      ===================================================== */
-
-      if (
-        session.step === 'service'
-      ) {
-
-        let chosenService =
-          null;
-
-
-        /*
-          El cliente puede responder
-          con el número del servicio.
-        */
-        const option =
-          Number(
-            text.trim()
-          ) - 1;
-
-
-        if (
-          Number.isInteger(option) &&
-          option >= 0 &&
-          option <
-            db.services.length
-        ) {
-
-          chosenService =
-            db.services[
-              option
-            ];
-        }
-
-        else {
-
-          /*
-            También puede escribirlo
-            naturalmente:
-
-            "corte"
-            "barba"
-            "corte y barba"
-          */
-          chosenService =
-            findServiceFromText(
-              text,
-              db
-            );
-        }
-
-
-        if (!chosenService) {
-
-          return sendWhatsApp(
-            from,
-
-            'No alcancé a identificar el servicio.\n\n' +
-
-            'Elige una opción:\n\n' +
-
-            formatServiceList(db)
-          );
-        }
-
-
-        session.data.serviceId =
-          chosenService.id;
-
-
-        /*
-          Si el cliente ya había dicho
-          el día en un mensaje anterior,
-          no volvemos a preguntarlo.
-        */
-        if (
-          session.data.date
-        ) {
-
-          ensureBarber(
-            session,
-            db
-          );
-
-
-          session.step =
-            'time';
-
-
-          waSessions.set(
+          saveSession(
             from,
             session
           );
 
-
-          return sendWhatsApp(
+          return pedirCampoEdicion(
             from,
-
-            `✂️ Perfecto: ${chosenService.name}.\n\n` +
-
-            `📅 Ya tengo el día: ${session.data.date}.\n\n` +
-
-            '🕐 ¿A qué hora aproximadamente deseas comenzar?'
+            db,
+            session,
+            field
           );
         }
 
-
-        session.step =
-          'date';
-
-
-        waSessions.set(
+        return procesarEdicion(
           from,
-          session
-        );
-
-
-        return sendWhatsApp(
-          from,
-
-          `✂️ Perfecto: ${chosenService.name}.\n\n` +
-
-          `📅 ¿Para qué día necesitas ${
-            session.data.cantidadPersonas === 1
-              ? 'el turno'
-              : 'los turnos'
-          }?`
+          db,
+          session,
+          text
         );
       }
 
+      /* =====================================================
+         SALUDO
+      ===================================================== */
+
+      const greeting =
+        /^(hola|buenas|buenos dias|buenas tardes|buenas noches|hey|ola)\b/.test(
+          lower
+        );
+
+      const reservationIntent =
+        /\b(reserv|agend|cita|turno|corte|barba|diseno)\b/.test(
+          lower
+        );
+
+      if (
+        greeting &&
+        session.step ===
+          'idle' &&
+        !reservationIntent
+      ) {
+        return sendWhatsApp(
+          from,
+          '👋 ¡Hola! Bienvenido a El Máster 💈\n\n' +
+          'Con gusto puedo ayudarte.\n' +
+          'Dime cuántos turnos deseas reservar.'
+        );
+      }
 
       /* =====================================================
-         PASO: CANTIDAD DE TURNOS
+         INICIO DE NUEVA RESERVA
       ===================================================== */
 
       if (
-        session.step === 'quantity'
+        session.step ===
+          'idle' &&
+        (
+          reservationIntent ||
+          /\b(quiero|necesito|deseo).*(reserv|cita|turno)\b/.test(
+            lower
+          )
+        )
       ) {
+        session = {
+          step: 'flow',
+          data: {}
+        };
 
-        /*
-          Aquí sí permitimos que el
-          cliente responda simplemente:
+        saveSession(
+          from,
+          session
+        );
+      }
 
-          1
-          2
-          3
-          etc.
+      /*
+       * Si el cliente escribió cualquier mensaje
+       * estando sin sesión, iniciamos el flujo
+       * en vez de dejarlo sin respuesta.
+       */
+      if (
+        session.step ===
+        'idle'
+      ) {
+        session = {
+          step: 'flow',
+          data: {}
+        };
 
-          Porque sabemos que Elia acaba
-          de preguntarle cuántos turnos.
-        */
+        saveSession(
+          from,
+          session
+        );
+      }
+
+      /* =====================================================
+         CANTIDAD DE PERSONAS
+      ===================================================== */
+
+      if (
+        session.step ===
+        'people'
+      ) {
         const cantidad =
           extraerCantidadPersonas(
             text,
             true
           );
 
-
-        if (!cantidad) {
-
+        if (
+          !cantidad ||
+          cantidad < 1 ||
+          cantidad > 10
+        ) {
           return sendWhatsApp(
             from,
-
-            '👥 ¿Cuántos turnos necesitas? Puedes reservar de 1 a 10.'
+            '👥 Indícame cuántos turnos necesitas, entre 1 y 10.'
           );
         }
-
 
         session.data
           .cantidadPersonas =
           cantidad;
 
-
-        /*
-          Si el cliente ya había indicado
-          un servicio anteriormente,
-          no necesitamos preguntarlo otra vez.
-        */
-        if (
-          session.data.serviceId
-        ) {
-
-          if (
-            session.data.date
-          ) {
-
-            ensureBarber(
-              session,
-              db
-            );
-
-
-            session.step =
-              'time';
-
-
-            waSessions.set(
-              from,
-              session
-            );
-
-
-            return sendWhatsApp(
-              from,
-
-              `Perfecto 👌 Serán ${cantidad} ${
-                cantidad === 1
-                  ? 'turno'
-                  : 'turnos'
-              }.\n\n` +
-
-              `📅 Ya tengo el día: ${session.data.date}.\n\n` +
-
-              '🕐 ¿A qué hora aproximadamente deseas comenzar?'
-            );
-          }
-
-
-          session.step =
-            'date';
-
-
-          waSessions.set(
-            from,
-            session
+        session.data.people =
+          crearPersonas(
+            cantidad
           );
 
+        delete session.data
+          .serviceId;
 
-          return sendWhatsApp(
-            from,
-
-            `Perfecto 👌 Serán ${cantidad} ${
-              cantidad === 1
-                ? 'turno'
-                : 'turnos'
-            }.\n\n` +
-
-            '📅 ¿Para qué día los necesitas?'
-          );
-        }
-
+        limpiarHorarios(
+          session
+        );
 
         session.step =
-          'service';
+          'flow';
 
-
-        waSessions.set(
+        saveSession(
           from,
           session
         );
 
-
-        return askServices(
+        return pedirSiguienteDato(
           from,
           db,
-          cantidad
+          session
         );
       }
 
-
       /* =====================================================
-         NUEVA RESERVA / CONVERSACIÓN INICIAL
+         SERVICIO DE CADA PERSONA
       ===================================================== */
 
       if (
-        session.step === 'idle'
+        session.step ===
+        'person_service'
       ) {
-
-        /*
-          Intentamos recuperar toda la
-          información que el cliente ya
-          haya escrito en su primer mensaje.
-
-          Ejemplos:
-
-          "Quiero dos turnos mañana"
-
-          "Necesito 3 cortes mañana"
-
-          "Quiero un corte mañana a las 3"
-
-          De esta forma Elia no vuelve a
-          preguntar datos que ya recibió.
-        */
-
-        const cantidad =
-          extraerCantidadPersonas(
-            text,
-            false
+        const people =
+          ensurePeople(
+            session,
+            db
           );
 
+        const currentIndex =
+          session.data
+            .currentPersonIndex ||
+          nextPersonWithoutService(
+            people
+          )?.index;
+
+        /*
+         * Antes de interpretar un número como
+         * servicio, intentamos reconocer una frase
+         * completa del tipo:
+         *
+         * "el primero corte y barba y
+         *  el segundo solo corte"
+         */
+        if (
+          session.data
+            .cantidadPersonas > 1
+        ) {
+          const assignments =
+            parsePersonAssignments(
+              text,
+              db,
+              session.data
+                .cantidadPersonas
+            );
+
+          if (assignments) {
+            session.data.people =
+              assignments;
+
+            delete session.data
+              .currentPersonIndex;
+
+            limpiarHorarios(
+              session
+            );
+
+            session.step =
+              'flow';
+
+            saveSession(
+              from,
+              session
+            );
+
+            return pedirSiguienteDato(
+              from,
+              db,
+              session
+            );
+          }
+
+          /*
+           * Si hay varias personas y el cliente
+           * escribe una frase ambigua como:
+           * "un corte y una barba",
+           * no asumimos quién quiere qué.
+           */
+          if (
+            hasMultipleDifferentServices(
+              text,
+              db
+            ) &&
+            !numeroOrdinal(text)
+          ) {
+            return sendWhatsApp(
+              from,
+              'Para no equivocarme necesito saber qué servicio corresponde a cada persona. 👍\n\n' +
+              'Por ejemplo:\n' +
+              '“El primero corte y el segundo barba”\n\n' +
+              'o dime ahora solamente el servicio de la persona ' +
+              `${currentIndex}.`
+            );
+          }
+        }
 
         const service =
-          findServiceFromText(
+          detectarServicioPersona(
             text,
             db
           );
 
-
-        const date =
-          dateFromSpanish(
-            text
+        if (!service) {
+          return sendWhatsApp(
+            from,
+            '✂️ No pude reconocer ese servicio.\n\n' +
+            formatServiceList(db) +
+            '\n\nResponde con el número o escribe el servicio.'
           );
-
-
-        const requestedTime =
-          extractRequestedTime(
-            text
-          );
-
-
-        /*
-          Guardamos todo lo que
-          logremos entender.
-        */
-        if (cantidad) {
-
-          session.data
-            .cantidadPersonas =
-            cantidad;
         }
 
+        aplicarServiciosAUnaPersona(
+          db,
+          people,
+          currentIndex,
+          service
+        );
 
-        if (service) {
-
-          session.data
-            .serviceId =
+        /*
+         * Compatibilidad con reserva individual.
+         */
+        if (
+          people.length === 1
+        ) {
+          session.data.serviceId =
             service.id;
         }
 
+        delete session.data
+          .currentPersonIndex;
 
-        if (date) {
-
-          session.data.date =
-            date;
-        }
-
-
-        if (requestedTime) {
-
-          session.data
-            .requestedTime =
-            requestedTime;
-        }
-
-
-        ensureBarber(
-          session,
-          db
+        limpiarHorarios(
+          session
         );
 
-
-        /* ---------------------------------
-           FALTA CANTIDAD
-        --------------------------------- */
-
-        if (!cantidad) {
-
-          session.step =
-            'quantity';
-
-
-          waSessions.set(
-            from,
-            session
-          );
-
-
-          return sendWhatsApp(
-            from,
-
-            '👋 ¡Hola! Bienvenido a El Máster 💈\n\n' +
-
-            'Con gusto puedo ayudarte con tu reserva.\n\n' +
-
-            '👥 ¿Cuántos turnos necesitas?\n' +
-
-            'Puedes reservar de 1 a 10.'
-          );
-        }
-
-
-        /* ---------------------------------
-           FALTA SERVICIO
-        --------------------------------- */
-
-        if (
-          !session.data.serviceId
-        ) {
-
-          session.step =
-            'service';
-
-
-          waSessions.set(
-            from,
-            session
-          );
-
-
-          return askServices(
-            from,
-            db,
-            cantidad
-          );
-        }
-
-
-        /* ---------------------------------
-           FALTA FECHA
-        --------------------------------- */
-
-        if (
-          !session.data.date
-        ) {
-
-          session.step =
-            'date';
-
-
-          waSessions.set(
-            from,
-            session
-          );
-
-
-          return sendWhatsApp(
-            from,
-
-            `Perfecto 👌 Entendí que necesitas ${cantidad} ${
-              cantidad === 1
-                ? 'turno'
-                : 'turnos'
-            }.\n\n` +
-
-            '📅 ¿Para qué día los necesitas?'
-          );
-        }
-
-
-        /* ---------------------------------
-           YA TENEMOS:
-           cantidad + servicio + fecha
-        --------------------------------- */
-
         session.step =
-          'time';
+          'flow';
 
-
-        waSessions.set(
+        saveSession(
           from,
           session
         );
 
-
-        /*
-          Si además escribió una hora
-          en el mismo mensaje, comprobamos
-          esa hora inmediatamente.
-        */
-        if (
-          requestedTime
-        ) {
-
-          const available =
-            slotsFor(
-
-              session.data.date,
-
-              session.data.barberId,
-
-              session.data.serviceId,
-
-              cantidad
-            );
-
-
-          /*
-            LA HORA EXACTA ESTÁ DISPONIBLE
-          */
-          if (
-            available.includes(
-              requestedTime
-            )
-          ) {
-
-            session.data.time =
-              requestedTime;
-
-
-            session.data.endTime =
-              calculateEndTime(
-
-                db,
-
-                requestedTime,
-
-                session.data
-                  .serviceId,
-
-                cantidad
-              );
-
-
-            session.data
-              .lastNearby =
-              null;
-
-
-            session.step =
-              'name';
-
-
-            waSessions.set(
-              from,
-              session
-            );
-
-
-            return sendWhatsApp(
-              from,
-
-              '✅ Sí, tengo disponible todo el bloque solicitado.\n\n' +
-
-              `🕐 Inicio: ${requestedTime}\n` +
-
-              `🏁 Final aprox.: ${session.data.endTime}\n\n` +
-
-              '👤 ¿A nombre de quién registro la reserva?'
-            );
-          }
-
-
-          /*
-            LA HORA EXACTA NO ESTÁ DISPONIBLE.
-            BUSCAMOS LAS MÁS CERCANAS.
-          */
-          const nearby =
-            nearestSlots(
-
-              available,
-
-              requestedTime,
-
-              4
-            );
-
-
-          session.data
-            .lastNearby =
-            nearby;
-
-
-          waSessions.set(
-            from,
-            session
-          );
-
-
-          if (
-            nearby.length
-          ) {
-
-            return sendWhatsApp(
-              from,
-
-              `A las ${requestedTime} no tengo disponible todo el bloque necesario para ${cantidad} ${
-                cantidad === 1
-                  ? 'turno'
-                  : 'turnos'
-              }.\n\n` +
-
-              'Los horarios disponibles más cercanos son:\n' +
-
-              nearby
-                .map(
-                  (slot, index) =>
-                    `${index + 1}. ${slot}`
-                )
-                .join('\n') +
-
-              '\n\nPuedes escribir el número de la opción o la hora que prefieras.'
-            );
-          }
-
-
-          return sendWhatsApp(
-            from,
-
-            '😕 No tengo un bloque suficiente ese día.\n\n' +
-
-            '¿Quieres probar con otra fecha?'
-          );
-        }
-
-
-        /*
-          Si todavía falta la hora.
-        */
-        return sendWhatsApp(
+        return pedirSiguienteDato(
           from,
-
-          '🕐 ¿A qué hora aproximadamente deseas comenzar?'
+          db,
+          session
         );
       }
 
-
       /* =====================================================
-         RESPUESTA DE SEGURIDAD
+         FECHA
       ===================================================== */
 
-      /*
-        Si por alguna razón una sesión
-        queda en un estado desconocido,
-        la reiniciamos para que el cliente
-        nunca se quede atrapado.
-      */
-      resetSession(
-        from
-      );
+      if (
+        session.step ===
+        'date'
+      ) {
+        const date =
+          dateFromSpanish(text);
 
+        if (!date) {
+          return sendWhatsApp(
+            from,
+            '📅 No pude reconocer esa fecha.\n\n' +
+            'Puedes decir “mañana”, “viernes” o escribir una fecha.'
+          );
+        }
 
-      return sendWhatsApp(
+        session.data.date =
+          date;
+
+        limpiarHorarios(
+          session
+        );
+
+        session.step =
+          'flow';
+
+        saveSession(
+          from,
+          session
+        );
+
+        return pedirSiguienteDato(
+          from,
+          db,
+          session
+        );
+      }
+
+      /* =====================================================
+         BARBERO
+      ===================================================== */
+
+      if (
+        session.step ===
+        'barber'
+      ) {
+        const active =
+          db.barbers.filter(
+            barber =>
+              barber.active !==
+              false
+          );
+
+        let chosen = null;
+
+        if (
+          /^\d+$/.test(
+            text.trim()
+          )
+        ) {
+          chosen =
+            active[
+              Number(
+                text.trim()
+              ) - 1
+            ];
+        }
+
+        if (!chosen) {
+          chosen =
+            findBarberFromText(
+              text,
+              db
+            );
+        }
+
+        if (!chosen) {
+          return pedirBarbero(
+            from,
+            db,
+            session
+          );
+        }
+
+        session.data.barberId =
+          chosen.id;
+
+        limpiarHorarios(
+          session
+        );
+
+        session.step =
+          'flow';
+
+        saveSession(
+          from,
+          session
+        );
+
+        return pedirSiguienteDato(
+          from,
+          db,
+          session
+        );
+      }
+
+      /* =====================================================
+         HORA
+      ===================================================== */
+
+      if (
+        session.step ===
+        'time'
+      ) {
+        /*
+         * Permitir cambiar el día directamente.
+         */
+        if (
+          /\b(cambiar|otro).*(dia|fecha)\b/.test(
+            lower
+          )
+        ) {
+          session.data.date =
+            null;
+
+          session.data
+            .requestedTime =
+            null;
+
+          limpiarHorarios(
+            session
+          );
+
+          return pedirFecha(
+            from,
+            session
+          );
+        }
+
+        const requested =
+          extractRequestedTime(
+            text
+          );
+
+        if (!requested) {
+          return sendWhatsApp(
+            from,
+            '🕐 Dime una hora, por ejemplo “3 PM”, “4:10” o “a las 5 de la tarde”.'
+          );
+        }
+
+        session.data
+          .requestedTime =
+          requested;
+
+        saveSession(
+          from,
+          session
+        );
+
+        return procesarHoraSolicitada(
+          from,
+          db,
+          session,
+          requested
+        );
+      }
+
+      /* =====================================================
+         ELEGIR OPCIÓN DE HORARIOS
+      ===================================================== */
+
+      if (
+        session.step ===
+        'group_options'
+      ) {
+        const options =
+          session.data
+            .lastGroupOptions ||
+          [];
+
+        const selectedNumber =
+          /^\d+$/.test(
+            text.trim()
+          )
+            ? Number(
+                text.trim()
+              )
+            : null;
+
+        if (
+          !selectedNumber ||
+          selectedNumber < 1 ||
+          selectedNumber >
+            options.length
+        ) {
+          /*
+           * También puede escribir otra hora
+           * en vez de escoger una opción.
+           */
+          const anotherTime =
+            extractRequestedTime(
+              text
+            );
+
+          if (anotherTime) {
+            session.data
+              .requestedTime =
+              anotherTime;
+
+            return procesarHoraSolicitada(
+              from,
+              db,
+              session,
+              anotherTime
+            );
+          }
+
+          return sendWhatsApp(
+            from,
+            'Responde con el número de la opción que prefieras, ' +
+            'o dime otra hora.'
+          );
+        }
+
+        const selected =
+          options[
+            selectedNumber - 1
+          ];
+
+        aplicarPlan(
+          session,
+          selected.plan
+        );
+
+        session.step =
+          'flow';
+
+        saveSession(
+          from,
+          session
+        );
+
+        return pedirSiguienteDato(
+          from,
+          db,
+          session
+        );
+      }
+
+      /* =====================================================
+         NOMBRE
+      ===================================================== */
+
+      if (
+        session.step ===
+        'name'
+      ) {
+        if (
+          text.length < 2
+        ) {
+          return sendWhatsApp(
+            from,
+            'Dime el nombre con el que deseas registrar la reserva.'
+          );
+        }
+
+        session.data.name =
+          text.trim();
+
+        session.step =
+          'flow';
+
+        saveSession(
+          from,
+          session
+        );
+
+        return pedirSiguienteDato(
+          from,
+          db,
+          session
+        );
+      }
+
+      /* =====================================================
+         FLUJO GENERAL
+      ===================================================== */
+
+      return pedirSiguienteDato(
         from,
-
-        '💈 Con gusto puedo ayudarte con una nueva reserva.\n\n' +
-
-        '👥 ¿Cuántos turnos necesitas?'
+        db,
+        session
       );
-    }
 
-    catch (error) {
-
+    } catch (error) {
       console.error(
         'WhatsApp webhook error:',
         error
@@ -2634,6 +3668,328 @@ app.post(
   }
 );
 
+/* =========================================================
+   MENSAJES PARA EDICIÓN
+========================================================= */
+
+function pedirCampoEdicion(
+  from,
+  db,
+  session,
+  field
+) {
+  if (
+    field === 'people'
+  ) {
+    return sendWhatsApp(
+      from,
+      '👥 ¿Cuántos turnos necesitas ahora? Puedes elegir de 1 a 10.'
+    );
+  }
+
+  if (
+    field === 'date'
+  ) {
+    return sendWhatsApp(
+      from,
+      '📅 Dime la nueva fecha. Por ejemplo: “mañana” o “viernes”.'
+    );
+  }
+
+  if (
+    field === 'time'
+  ) {
+    return sendWhatsApp(
+      from,
+      '🕐 Dime la nueva hora. Por ejemplo: “3 PM” o “4:10”.'
+    );
+  }
+
+  if (
+    field === 'service'
+  ) {
+    return sendWhatsApp(
+      from,
+      '✂️ Vamos a cambiar los servicios.\n\n' +
+      'Te preguntaré nuevamente el servicio de cada turno.'
+    );
+  }
+
+  if (
+    field === 'barber'
+  ) {
+    const active =
+      db.barbers.filter(
+        barber =>
+          barber.active !== false
+      );
+
+    return sendWhatsApp(
+      from,
+      '💈 Elige el nuevo barbero:\n\n' +
+      active
+        .map(
+          (barber, index) =>
+            `${index + 1}. ${barber.name}`
+        )
+        .join('\n')
+    );
+  }
+
+  if (
+    field === 'name'
+  ) {
+    return sendWhatsApp(
+      from,
+      '👤 Dime el nuevo nombre para la reserva.'
+    );
+  }
+
+  return sendWhatsApp(
+    from,
+    'Dime el nuevo dato.'
+  );
+}
+
+/* =========================================================
+   PROCESAR EDICIÓN
+========================================================= */
+
+async function procesarEdicion(
+  from,
+  db,
+  session,
+  text
+) {
+  const field =
+    session.data.editField;
+
+  if (
+    field === 'people'
+  ) {
+    const cantidad =
+      extraerCantidadPersonas(
+        text,
+        true
+      );
+
+    if (
+      !cantidad ||
+      cantidad < 1 ||
+      cantidad > 10
+    ) {
+      return sendWhatsApp(
+        from,
+        'Indícame una cantidad entre 1 y 10.'
+      );
+    }
+
+    session.data
+      .cantidadPersonas =
+      cantidad;
+
+    session.data.people =
+      crearPersonas(
+        cantidad
+      );
+
+    delete session.data
+      .serviceId;
+
+    limpiarHorarios(
+      session
+    );
+
+    delete session.data
+      .editField;
+
+    session.step =
+      'flow';
+
+    saveSession(
+      from,
+      session
+    );
+
+    return pedirSiguienteDato(
+      from,
+      db,
+      session
+    );
+  }
+
+  if (
+    field === 'date'
+  ) {
+    const date =
+      dateFromSpanish(text);
+
+    if (!date) {
+      return sendWhatsApp(
+        from,
+        'No pude reconocer esa fecha. Puedes decir “mañana”, “viernes” o una fecha.'
+      );
+    }
+
+    session.data.date =
+      date;
+
+    session.data
+      .requestedTime =
+      null;
+
+    limpiarHorarios(
+      session
+    );
+  }
+
+  if (
+    field === 'time'
+  ) {
+    const time =
+      extractRequestedTime(
+        text
+      );
+
+    if (!time) {
+      return sendWhatsApp(
+        from,
+        'No pude reconocer esa hora. Por ejemplo: “3 PM” o “15:30”.'
+      );
+    }
+
+    session.data
+      .requestedTime =
+      time;
+
+    limpiarHorarios(
+      session
+    );
+  }
+
+  if (
+    field === 'service'
+  ) {
+    /*
+     * Reiniciamos únicamente los servicios.
+     * Conservamos cantidad, fecha, barbero y nombre.
+     */
+    const cantidad =
+      session.data
+        .cantidadPersonas || 1;
+
+    session.data.people =
+      crearPersonas(
+        cantidad
+      );
+
+    delete session.data
+      .serviceId;
+
+    limpiarHorarios(
+      session
+    );
+
+    delete session.data
+      .editField;
+
+    session.step =
+      'flow';
+
+    saveSession(
+      from,
+      session
+    );
+
+    return pedirSiguienteDato(
+      from,
+      db,
+      session
+    );
+  }
+
+  if (
+    field === 'barber'
+  ) {
+    const active =
+      db.barbers.filter(
+        barber =>
+          barber.active !== false
+      );
+
+    let chosen = null;
+
+    if (
+      /^\d+$/.test(
+        text.trim()
+      )
+    ) {
+      chosen =
+        active[
+          Number(
+            text.trim()
+          ) - 1
+        ];
+    }
+
+    if (!chosen) {
+      chosen =
+        findBarberFromText(
+          text,
+          db
+        );
+    }
+
+    if (!chosen) {
+      return pedirCampoEdicion(
+        from,
+        db,
+        session,
+        'barber'
+      );
+    }
+
+    session.data.barberId =
+      chosen.id;
+
+    limpiarHorarios(
+      session
+    );
+  }
+
+  if (
+    field === 'name'
+  ) {
+    if (
+      text.trim().length < 2
+    ) {
+      return sendWhatsApp(
+        from,
+        'Dime un nombre válido para la reserva.'
+      );
+    }
+
+    session.data.name =
+      text.trim();
+  }
+
+  delete session.data
+    .editField;
+
+  session.step =
+    'flow';
+
+  saveSession(
+    from,
+    session
+  );
+
+  return pedirSiguienteDato(
+    from,
+    db,
+    session
+  );
+}
 
 /* =========================================================
    INICIAR SERVIDOR
@@ -2642,7 +3998,6 @@ app.post(
 app.listen(
   PORT,
   () => {
-
     console.log(
       `Barbería: http://localhost:${PORT}`
     );
