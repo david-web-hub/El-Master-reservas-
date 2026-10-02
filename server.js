@@ -1830,8 +1830,8 @@ function pedirCantidad(from, session) {
 
   return sendWhatsApp(
     from,
-    '👥 ¿Cuántos turnos necesitas reservar?\n\n' +
-    'Puedes reservar de 1 a 10.'
+  '👥 ¿Cuántos turnos necesitas reservar?'
+     
   );
 }
 
@@ -1888,8 +1888,7 @@ function pedirServicioPersona(
   return sendWhatsApp(
     from,
     intro +
-    formatServiceList(db) +
-    '\n\nPuedes responder con el número o escribir el servicio.'
+    formatServiceList(db)
   );
 }
 
@@ -1901,12 +1900,9 @@ function pedirFecha(
   saveSession(from, session);
 
   return sendWhatsApp(
-    from,
-    '📅 ¿Para qué día necesitas ' +
-    'la reserva?\n\n' +
-    'Puedes decir “hoy”, “mañana”, ' +
-    '“viernes” o escribir una fecha.'
-  );
+  from,
+  '📅 ¿Para qué día necesitas la reserva?'
+);
 }
 
 function pedirBarbero(
@@ -1944,13 +1940,10 @@ function pedirHora(
 
   saveSession(from, session);
 
-  return sendWhatsApp(
-    from,
-    '🕐 ¿A qué hora aproximadamente ' +
-    'te gustaría comenzar?\n\n' +
-    'Por ejemplo: “3 PM”, “4:10” o ' +
-    '“a las 5 de la tarde”.'
-  );
+return sendWhatsApp(
+  from,
+  '🕐 ¿A qué hora te gustaría comenzar?'
+);
 }
 
 function pedirNombre(
