@@ -697,26 +697,51 @@ waSessions.set(from,s);
 
 const serviceName=fresh.services.find(x=>x.id===s.data.serviceId)?.name || 'Servicio';
 const barberName=fresh.barbers.find(x=>x.id===s.data.barberId)?.name || 'Master';
+const cantidadPersonas=s.data.cantidadPersonas || 1;
 
 return sendWhatsApp(from,
   `📋 *Resumen de tu reserva*\n\n` +
   `👤 ${s.data.name}\n` +
+  `👥 ${cantidadPersonas} ${cantidadPersonas === 1 ? 'turno' : 'turnos'}\n` +
   `✂️ ${serviceName}\n` +
   `💈 ${barberName}\n` +
   `📅 ${s.data.date}\n` +
   `🕐 ${s.data.time}\n\n` +
   `¿Está todo correcto?\n\n` +
-  `Escribe *CONFIRMAR* para reservar tu cita.`
+  `✅ Escribe *CONFIRMAR* para reservar\n` +
+  `✏️ Escribe *EDITAR* para modificar la reserva\n` +
+  `❌ Escribe *CANCELAR* para cancelar`
 );
     }
 if(s.step==='confirm'){
   const respuesta=text.trim().toLowerCase();
 
-  if(respuesta!=='confirmar'){
-    return sendWhatsApp(from,
-      'Para completar la reserva escribe *CONFIRMAR*.'
-    );
-  }
+  if(respuesta === 'cancelar'){
+  waSessions.delete(from);
+  return sendWhatsApp(from,
+    '❌ Reserva cancelada. No se ha guardado ninguna cita.\n\nCuando quieras reservar nuevamente, escríbeme.'
+  );
+}
+
+if(respuesta === 'editar'){
+  s.step = 'date';
+  s.data.date = null;
+  s.data.time = null;
+  waSessions.set(from,s);
+
+  return sendWhatsApp(from,
+    '✏️ Perfecto, vamos a editar tu reserva.\n\n📅 ¿Para qué día necesitas los turnos?'
+  );
+}
+
+if(respuesta !== 'confirmar'){
+  return sendWhatsApp(from,
+    'Elige una de estas opciones:\n\n' +
+    '✅ *CONFIRMAR*\n' +
+    '✏️ *EDITAR*\n' +
+    '❌ *CANCELAR*'
+  );
+}
 
   // Verificar nuevamente que el horario siga disponible
   if(!slotsFor(
