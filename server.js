@@ -10,6 +10,13 @@ const PORT = process.env.PORT || 3000;
 const DB = path.join(__dirname, 'data', 'db.json');
 const TZ = 'America/Guayaquil';
 
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL
+    ? { rejectUnauthorized: false }
+    : false
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
