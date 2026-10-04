@@ -4032,6 +4032,170 @@ async function procesarEdicion(
   );
 }
 
+    /* =========================================================
+   CAJA - API POSTGRESQL
+========================================================= */
+
+// Registrar una venta
+app.post('/api/sales', async (req, res) => {
+  try {
+    const {
+      bookingId = null,
+      customerName = null,
+      customerPhone = null,
+      items = [],
+      total = 0,
+      paymentMethod
+    } = req.body;
+
+    if (!paymentMethod) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Selecciona un método de pago'
+      });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Agrega al menos un servicio o producto'
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO sales
+        (booking_id, customer_name, customer_phone, items, total, payment_method)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+       RETURNING *`,
+      [
+        bookingId,
+        customerName,
+        customerPhone,
+        JSON.stringify(items),
+        Number(total),
+        paymentMethod
+      ]
+    );
+
+    res.json({
+      ok: true,
+      sale: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('ERROR REGISTRANDO VENTA:', error);
+    res.status(500).json({
+      ok: false,
+      error: 'No se pudo registrar la venta'
+    });
+  }
+});
+
+
+// Resumen de caja del día
+app.get('/api/cash/today', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total_sales,
+        COALESCE(SUM(total), 0)::numeric AS total_income,
+
+        COALESCE(
+          SUM(total) FILTER (WHERE payment_method = 'cash'),
+          0
+        )::numeric AS cash,
+
+        COALESCE(
+          SUM(total) FILTER (WHERE payment_method = 'transfer'),
+          0
+        )::numeric AS transfer,
+
+        COALESCE(
+          SUM(total) FILTER (WHERE payment_method = 'card'),
+          0
+        )::numeric AS card
+
+      FROM sales
+      WHERE sale_date = CURRENT_DATE
+        AND status = 'paid'
+    `);
+
+    res.json({
+      ok: true,
+      summary: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('ERROR CONSULTANDO CAJA:', error);
+    res.status(500).json({
+      ok: false,
+      error: 'No se pudo consultar la caja'
+    });
+  }
+});
+
+
+// Cerrar caja del día
+app.post('/api/cash/close', async (req, res) => {
+  try {
+    const totalResult = await pool.query(`
+      SELECT COALESCE(SUM(total), 0)::numeric AS total
+      FROM sales
+      WHERE sale_date = CURRENT_DATE
+        AND status = 'paid'
+    `);
+
+    const total = Number(totalResult.rows[0].total || 0);
+
+    const existing = await pool.query(`
+      SELECT id
+      FROM cash_sessions
+      WHERE session_date = CURRENT_DATE
+      LIMIT 1
+    `);
+
+    let session;
+
+    if (existing.rows.length > 0) {
+      const result = await pool.query(
+        `UPDATE cash_sessions
+         SET status = 'closed',
+             closed_at = NOW(),
+             closing_total = $1
+         WHERE id = $2
+         RETURNING *`,
+        [total, existing.rows[0].id]
+      );
+
+      session = result.rows[0];
+
+    } else {
+      const result = await pool.query(
+        `INSERT INTO cash_sessions
+          (session_date, status, closed_at, closing_total)
+         VALUES (CURRENT_DATE, 'closed', NOW(), $1)
+         RETURNING *`,
+        [total]
+      );
+
+      session = result.rows[0];
+    }
+
+    res.json({
+      ok: true,
+      message: 'Caja cerrada correctamente',
+      session
+    });
+
+  } catch (error) {
+    console.error('ERROR CERRANDO CAJA:', error);
+    res.status(500).json({
+      ok: false,
+      error: 'No se pudo cerrar la caja'
+    });
+  }
+});
+
 /* =========================================================
    INICIAR SERVIDOR
 ========================================================= */
