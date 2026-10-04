@@ -17,6 +17,14 @@ const pool = new Pool({
     : false
 });
 
+pool.query('SELECT NOW()')
+  .then(() => {
+    console.log('POSTGRESQL CONECTADO CORRECTAMENTE');
+  })
+  .catch((error) => {
+    console.error('ERROR CONECTANDO POSTGRESQL:', error.message);
+  });
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
