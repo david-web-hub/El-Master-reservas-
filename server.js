@@ -25,6 +25,38 @@ pool.query('SELECT NOW()')
     console.error('ERROR CONECTANDO POSTGRESQL:', error.message);
   });
 
+async function initPostgres() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales (
+      id BIGSERIAL PRIMARY KEY,
+      booking_id TEXT,
+      customer_name TEXT,
+      customer_phone TEXT,
+      items JSONB NOT NULL DEFAULT '[]'::jsonb,
+      total NUMERIC(10,2) NOT NULL DEFAULT 0,
+      payment_method TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'paid',
+      sale_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS cash_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      session_date DATE NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'open',
+      opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      closed_at TIMESTAMPTZ,
+      closing_total NUMERIC(10,2)
+    );
+  `);
+
+  console.log('TABLAS DE CAJA LISTAS');
+}
+
+initPostgres().catch((error) => {
+  console.error('ERROR INICIANDO TABLAS DE CAJA:', error.message);
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
