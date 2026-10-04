@@ -973,14 +973,23 @@ textarea.input{
           <div class="stat-label">Método de pago</div>
 
           <div class="payment-row">
-            <button class="btn btn-dark">Efectivo</button>
-            <button class="btn btn-dark">Transferencia</button>
-            <button class="btn btn-dark">Tarjeta</button>
+          <button class="btn btn-dark" onclick="seleccionarPago('cash', this)">Efectivo</button>
+<button class="btn btn-dark" onclick="seleccionarPago('transfer', this)">Transferencia</button>
+<button class="btn btn-dark" onclick="seleccionarPago('card', this)">Tarjeta</button>
+
+            <input
+  type="file"
+  id="comprobanteTransferencia"
+  accept="image/*"
+  capture="environment"
+  style="display:none"
+  onchange="comprobanteSeleccionado(this)"
+>
           </div>
 
-          <button class="btn btn-gold" style="width:100%;margin-top:15px">
-            Registrar venta
-          </button>
+         <button class="btn btn-gold" style="width:100%;margin-top:15px" onclick="registrarVenta()">
+    Registrar venta
+</button>
 
         </div>
 
