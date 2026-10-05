@@ -1408,14 +1408,16 @@ app.post(
       const result =
         await pool.query(
           `
-            INSERT INTO products (
-              id,
-              name,
-              price,
-              cost,
-              stock,
-              min_stock,
-              active
+        INSERT INTO products (
+  id,
+  name,
+  price,
+  cost,
+  stock,
+  min_stock,
+  active,
+  image_url
+)
             )
             VALUES (
               $1,
@@ -1423,8 +1425,10 @@ app.post(
               $3,
               $4,
               $5,
-              $6,
-              $7
+             $6,
+$7,
+$8
+)
             )
             RETURNING *
           `,
@@ -1436,7 +1440,8 @@ app.post(
             stock,
             minStock,
             req.body.active !==
-              false
+              false,
+             req.body.image || req.body.imageUrl || null
           ]
         );
 
