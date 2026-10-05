@@ -4456,28 +4456,27 @@ function renderProducts() {
 let productImageData = null;
 
 function openProductModal(id = null) {
-
   const product =
     products.find(
-      item =>
-        String(item.id) === String(id)
+      item => String(item.id) === String(id)
     ) || {
       name: '',
       price: 0,
       cost: 0,
       stock: 0,
-      min_stock: 2,
+      minStock: 2,
       active: true,
-      image: null
+      image: null,
+      imageUrl: null
     };
 
   productImageData =
-    product.image || null;
+    product.image ||
+    product.imageUrl ||
+    null;
 
   $('modalTitle').textContent =
-    id
-      ? 'Editar producto'
-      : 'Agregar producto';
+    id ? 'Editar producto' : 'Agregar producto';
 
   $('modalContent').innerHTML = `
     <div class="form-grid">
@@ -4524,13 +4523,8 @@ function openProductModal(id = null) {
                     color:#999;
                   "
                 >
-                  <div style="font-size:42px">
-                    📷
-                  </div>
-
-                  <div>
-                    Agrega una foto del producto
-                  </div>
+                  <div style="font-size:42px">📷</div>
+                  <div>Agrega una foto del producto</div>
                 </div>
               `
           }
@@ -4571,9 +4565,7 @@ function openProductModal(id = null) {
 
 
       <div class="field">
-        <label>
-          Nombre del producto
-        </label>
+        <label>Nombre del producto</label>
 
         <input
           id="productName"
@@ -4585,9 +4577,7 @@ function openProductModal(id = null) {
 
 
       <div class="field">
-        <label>
-          Precio de venta
-        </label>
+        <label>Precio de venta</label>
 
         <input
           id="productPrice"
@@ -4601,9 +4591,7 @@ function openProductModal(id = null) {
 
 
       <div class="field">
-        <label>
-          Costo
-        </label>
+        <label>Costo</label>
 
         <input
           id="productCost"
@@ -4617,9 +4605,7 @@ function openProductModal(id = null) {
 
 
       <div class="field">
-        <label>
-          Stock
-        </label>
+        <label>Existencias</label>
 
         <input
           id="productStock"
@@ -4633,9 +4619,7 @@ function openProductModal(id = null) {
 
 
       <div class="field">
-        <label>
-          Stock mínimo
-        </label>
+        <label>Stock mínimo</label>
 
         <input
           id="productMinStock"
@@ -4643,21 +4627,17 @@ function openProductModal(id = null) {
           type="number"
           min="0"
           step="1"
-          value="${
-            Number(
-              product.min_stock ??
-              product.minStock ??
-              2
-            )
-          }"
+          value="${Number(
+            product.minStock ??
+            product.min_stock ??
+            2
+          )}"
         >
       </div>
 
 
       <div class="field">
-        <label>
-          Estado
-        </label>
+        <label>Estado</label>
 
         <select
           id="productActive"
@@ -4665,22 +4645,14 @@ function openProductModal(id = null) {
         >
           <option
             value="true"
-            ${
-              product.active !== false
-                ? 'selected'
-                : ''
-            }
+            ${product.active !== false ? 'selected' : ''}
           >
             Activo
           </option>
 
           <option
             value="false"
-            ${
-              product.active === false
-                ? 'selected'
-                : ''
-            }
+            ${product.active === false ? 'selected' : ''}
           >
             Inactivo
           </option>
@@ -4691,25 +4663,22 @@ function openProductModal(id = null) {
 
 
     <button
+      type="button"
       class="btn btn-gold"
       style="
         width:100%;
         margin-top:18px;
       "
-      onclick="saveProduct(
-        ${id ? `'${id}'` : 'null'}
-      )"
+      onclick="saveProduct(${id ? `'${id}'` : 'null'})"
     >
       Guardar producto
     </button>
   `;
 
-
   $('modalBack')
     .classList
     .add('show');
 }
-
 function closeModal() {
 
   $('modalBack')
