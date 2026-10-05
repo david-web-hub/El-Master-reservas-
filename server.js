@@ -582,7 +582,10 @@ async function initPostgres() {
 
     )
   `);
-
+await pool.query(`
+  ALTER TABLE products
+  ADD COLUMN IF NOT EXISTS image_url TEXT
+`);
 
   /*
     CONFIGURACIÓN ADMINISTRATIVA
