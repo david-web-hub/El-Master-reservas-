@@ -1512,127 +1512,106 @@ app.patch(
       }
 
 
-      const current =
-        existing.rows[0];
+     const current = existing.rows[0];
 
+const name =
+  req.body.name !== undefined
+    ? String(req.body.name).trim()
+    : current.name;
 
-      const name =
-        req.body.name !==
-        undefined
-          ? String(
-              req.body.name
-            ).trim()
-          : current.name;
+const price =
+  req.body.price !== undefined
+    ? Number(req.body.price)
+    : Number(current.price);
 
+const cost =
+  req.body.cost !== undefined
+    ? Number(req.body.cost)
+    : Number(current.cost);
 
-      const price =
-        req.body.price !==
-        undefined
-          ? Number(
-              req.body.price
-            )
-          : Number(
-              current.price
-            );
+const stock =
+  req.body.stock !== undefined
+    ? Number(req.body.stock)
+    : Number(current.stock);
 
+const minStock =
+  req.body.minStock !== undefined
+    ? Number(req.body.minStock)
+    : Number(current.min_stock);
 
-      const cost =
-        req.body.cost !==
-        undefined
-          ? Number(
-              req.body.cost
-            )
-          : Number(
-              current.cost
-            );
+const active =
+  req.body.active !== undefined
+    ? req.body.active !== false
+    : current.active;
 
+const imageUrl =
+  req.body.image !== undefined
+    ? req.body.image
+    : req.body.imageUrl !== undefined
+      ? req.body.imageUrl
+      : current.image_url;
 
-      const stock =
-        req.body.stock !==
-        undefined
-          ? Math.floor(
-              Number(
-                req.body.stock
-              )
-            )
-          : Number(
-              current.stock
-            );
+if (!name) {
+  return res.status(400).json({
+    ok: false,
+    error: 'Nombre de producto requerido'
+  });
+}
 
+if (!Number.isFinite(price) || price < 0) {
+  return res.status(400).json({
+    ok: false,
+    error: 'Precio inválido'
+  });
+}
 
-      const minStock =
-        req.body.minStock !==
-        undefined
-          ? Math.floor(
-              Number(
-                req.body.minStock
-              )
-            )
-          : Number(
-              current.min_stock
-            );
+if (!Number.isFinite(cost) || cost < 0) {
+  return res.status(400).json({
+    ok: false,
+    error: 'Costo inválido'
+  });
+}
 
+if (!Number.isFinite(stock) || stock < 0) {
+  return res.status(400).json({
+    ok: false,
+    error: 'Stock inválido'
+  });
+}
 
-      const active =
-        req.body.active !==
-        undefined
-          ? Boolean(
-              req.body.active
-            )
-          : current.active;
+if (!Number.isFinite(minStock) || minStock < 0) {
+  return res.status(400).json({
+    ok: false,
+    error: 'Stock mínimo inválido'
+  });
+}
 
-
-      if (
-        !name ||
-        !Number.isFinite(price) ||
-        price < 0 ||
-        !Number.isFinite(cost) ||
-        cost < 0 ||
-        !Number.isFinite(stock) ||
-        stock < 0 ||
-        !Number.isFinite(minStock) ||
-        minStock < 0
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error:
-              'Datos del producto no válidos'
-          });
-
-      }
-
-
-      const result =
-        await pool.query(
-          `
-            UPDATE products
-
-            SET
-              name = $1,
-              price = $2,
-              cost = $3,
-              stock = $4,
-              min_stock = $5,
-              active = $6,
-              updated_at = NOW()
-
-            WHERE id = $7
-
-            RETURNING *
-          `,
-          [
-            name,
-            price,
-            cost,
-            stock,
-            minStock,
-            active,
-            req.params.id
-          ]
-        );
+const result = await pool.query(
+  `
+    UPDATE products
+    SET
+      name = $1,
+      price = $2,
+      cost = $3,
+      stock = $4,
+      min_stock = $5,
+      active = $6,
+      image_url = $7,
+      updated_at = NOW()
+    WHERE id = $8
+    RETURNING *
+  `,
+  [
+    name,
+    price,
+    cost,
+    stock,
+    minStock,
+    active,
+    imageUrl,
+    req.params.id
+  ]
+);
 
 
       res.json({
