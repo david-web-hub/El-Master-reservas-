@@ -4251,13 +4251,21 @@ async function loadProducts() {
   } catch (error) {
 
     /*
-      El server.js nuevo
-      agregará esta API.
-
-      Hasta entonces
-      mantenemos la pantalla
-      estable y vacía.
+      Si falla la carga, mantenemos la pantalla
+      estable pero avisamos del error en lugar
+      de ocultarlo.
     */
+
+    console.error(
+      'ERROR CARGANDO PRODUCTOS:',
+      error
+    );
+
+    toast(
+      error.message ||
+      'No se pudieron cargar los productos.',
+      true
+    );
 
     products = [];
 
@@ -4570,7 +4578,7 @@ function openProductModal(id = null) {
         <input
           id="productName"
           class="input"
-          value="${escapeHTML(product.name || '')}"
+          value="${esc(product.name || '')}"
           placeholder="Ej. Gel para cabello"
         >
       </div>
@@ -4696,7 +4704,7 @@ async function handleProductImage(event) {
 
   if (!file.type.startsWith('image/')) {
 
-    notify(
+    toast(
       'Selecciona una imagen válida',
       true
     );
@@ -4706,7 +4714,7 @@ async function handleProductImage(event) {
 
   if (file.size > 8 * 1024 * 1024) {
 
-    notify(
+    toast(
       'La foto es demasiado grande. Máximo 8 MB.',
       true
     );
@@ -4738,7 +4746,7 @@ async function handleProductImage(event) {
       error
     );
 
-    notify(
+    toast(
       'No se pudo procesar la foto',
       true
     );
