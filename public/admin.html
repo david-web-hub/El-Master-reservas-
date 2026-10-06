@@ -4279,6 +4279,23 @@ async function loadProducts() {
 }
 
 
+function productImage(product) {
+
+  /*
+    El backend devuelve imageUrl; al guardar
+    se envía image. Se aceptan los tres nombres.
+  */
+
+  return (
+    product?.image ||
+    product?.imageUrl ||
+    product?.image_url ||
+    ''
+  );
+
+}
+
+
 function renderProducts() {
 
   const search =
@@ -4334,7 +4351,7 @@ function renderProducts() {
               0
             ) <=
             Number(
-              product.minStock ||
+              product.minStock ??
               2
             );
 
@@ -4350,10 +4367,10 @@ function renderProducts() {
       ">
 
         ${
-          product.image
+          productImage(product)
             ? `
               <img
-                src="${product.image}"
+                src="${esc(productImage(product))}"
                 alt="${esc(product.name || 'Producto')}"
                 style="
                   width:58px;
@@ -4479,8 +4496,7 @@ function openProductModal(id = null) {
     };
 
   productImageData =
-    product.image ||
-    product.imageUrl ||
+    productImage(product) ||
     null;
 
   $('modalTitle').textContent =
@@ -4514,7 +4530,7 @@ function openProductModal(id = null) {
             productImageData
               ? `
                 <img
-                  src="${productImageData}"
+                  src="${esc(productImageData)}"
                   alt="Foto del producto"
                   style="
                     width:100%;
@@ -4555,7 +4571,7 @@ function openProductModal(id = null) {
         >
           <button
             type="button"
-            class="btn"
+            class="btn btn-dark"
             onclick="$('productImageInput').click()"
           >
             📷 Elegir / tomar foto
@@ -4563,7 +4579,7 @@ function openProductModal(id = null) {
 
           <button
             type="button"
-            class="btn btn-red"
+            class="btn btn-danger"
             onclick="removeProductImage()"
           >
             Quitar foto
@@ -4672,12 +4688,13 @@ function openProductModal(id = null) {
 
     <button
       type="button"
+      id="saveProductBtn"
       class="btn btn-gold"
       style="
         width:100%;
         margin-top:18px;
       "
-      onclick="saveProduct(${id ? `'${id}'` : 'null'})"
+      onclick="saveProduct(${id ? `'${esc(id)}'` : 'null'})"
     >
       Guardar producto
     </button>
@@ -4697,8 +4714,13 @@ function closeModal() {
 
 async function handleProductImage(event) {
 
+  const input =
+    event.target;
+
   const file =
-    event.target.files?.[0];
+    input.files?.[0];
+
+  input.value = '';
 
   if (!file) return;
 
@@ -4727,9 +4749,14 @@ async function handleProductImage(event) {
     productImageData =
       await compressProductImage(file);
 
-    $('productImagePreview').innerHTML = `
+    const preview =
+      $('productImagePreview');
+
+    if (!preview) return;
+
+    preview.innerHTML = `
       <img
-        src="${productImageData}"
+        src="${esc(productImageData)}"
         alt="Foto del producto"
         style="
           width:100%;
@@ -4797,6 +4824,15 @@ function compressProductImage(file) {
         const context =
           canvas.getContext('2d');
 
+        context.fillStyle = '#ffffff';
+
+        context.fillRect(
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        );
+
         context.drawImage(
           image,
           0,
@@ -4835,6 +4871,12 @@ function compressProductImage(file) {
 function removeProductImage() {
 
   productImageData = null;
+
+  if ($('productImageInput')) {
+
+    $('productImageInput').value = '';
+
+  }
 
   $('productImagePreview').innerHTML = `
     <div
@@ -4928,6 +4970,45 @@ async function saveProduct(id) {
   }
 
 
+  if (!Number.isInteger(stock)) {
+
+    toast(
+      'El stock debe ser un número entero.',
+      true
+    );
+
+    return;
+  }
+
+
+  if (
+    !Number.isFinite(cost) ||
+    cost < 0
+  ) {
+
+    toast(
+      'Ingresa un costo válido.',
+      true
+    );
+
+    return;
+  }
+
+
+  if (
+    !Number.isInteger(minStock) ||
+    minStock < 0
+  ) {
+
+    toast(
+      'El stock mínimo debe ser un número entero, 0 o mayor.',
+      true
+    );
+
+    return;
+  }
+
+
   const body = {
 
     name,
@@ -4946,6 +5027,12 @@ async function saveProduct(id) {
       productImageData || null
 
   };
+
+
+  const saveBtn =
+    $('saveProductBtn');
+
+  if (saveBtn) saveBtn.disabled = true;
 
 
   try {
@@ -5001,6 +5088,8 @@ async function saveProduct(id) {
       'No se pudo guardar el producto.',
       true
     );
+
+    if (saveBtn) saveBtn.disabled = false;
 
   }
 
