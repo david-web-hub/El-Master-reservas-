@@ -4527,6 +4527,29 @@ function getSchedulePeriods(
     ).getUTCDay();
 
 
+  /* Un barbero que no acepta reservas no ofrece horarios (web y Elia). */
+  if (barber.acceptsBookings === false) {
+    return [];
+  }
+
+
+  /*
+    Horario configurado desde Configuración → Horarios.
+    Si todavía no se ha configurado, todo sigue como antes.
+  */
+  const configured =
+    db.hours?.[
+      String(jsDay)
+    ];
+
+  if (
+    Array.isArray(configured) &&
+    barber.scheduleCustom !== true
+  ) {
+    return configured;
+  }
+
+
   /*
     Primero usamos el horario individual
     del barbero, que es como funcionaba Elia.
@@ -7463,370 +7486,624 @@ function limpiarHorarios(
 
 
 /* =========================================================
-   DISPONIBILIDAD PARA LA PÁGINA WEB
+   ETAPA 3 — CONFIGURACIÓN DEL NEGOCIO + PÁGINA PÚBLICA
+   (se registra ANTES de las rutas antiguas de disponibilidad
+   y de creación de reservas web, que quedan como respaldo
+   sin uso porque estas versiones aceptan los mismos datos)
 ========================================================= */
 
-app.get(
-  '/api/availability',
-  (req, res) => {
+const MEDIA_KINDS = ['logo', 'cover', 'local', 'gallery', 'barber', 'service'];
+const FONT_KEYS = ['system', 'moderna', 'elegante', 'clasica'];
+let mediaTableReady = false;
 
-    try {
+async function ensureMediaTable() {
+  if (mediaTableReady) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS media_assets (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      data TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  mediaTableReady = true;
+}
 
-      const {
-        date,
-        barberId,
-        serviceId
-      } = req.query;
+function cleanText(value, max = 200) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .trim()
+    .slice(0, max);
+}
 
+function cleanColor(value, fallback) {
+  return /^#[0-9a-fA-F]{6}$/.test(String(value || '')) ? String(value) : fallback;
+}
 
-      if (
-        !date ||
-        !barberId ||
-        !serviceId
-      ) {
+function cleanUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString() : '';
+  } catch (error) {
+    return '';
+  }
+}
 
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error:
-              'date, barberId y serviceId son obligatorios'
-          });
+function validImageData(value) {
+  const match = /^data:image\/(jpeg|png|webp);base64,/.exec(value || '');
+  if (!match || value.length > 2500000) return false;
+  return /^[A-Za-z0-9+/=]+$/.test(value.slice(match[0].length));
+}
 
-      }
+async function readSettingsMap() {
+  const result = await pool.query('SELECT section, data FROM admin_settings');
+  const map = {};
+  for (const row of result.rows) map[row.section] = row.data || {};
+  return map;
+}
 
+async function saveSettingSection(section, data) {
+  await pool.query(
+    `INSERT INTO admin_settings (section, data, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (section) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+    [section, JSON.stringify(data)]
+  );
+}
 
-      const db =
-        readDB();
+function nowMinutesLocal() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date());
+  const h = Number(parts.find(p => p.type === 'hour').value) % 24;
+  const m = Number(parts.find(p => p.type === 'minute').value);
+  return h * 60 + m;
+}
 
+function isRealDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const d = new Date(value + 'T12:00:00Z');
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
 
-      const service =
-        db.services.find(
-          item =>
-            item.id ===
-              serviceId &&
-            item.active !==
-              false &&
-            item.bookingEnabled !==
-              false
-        );
+function parseServiceIds(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(',');
+  return [...new Set(list.map(item => String(item).trim()).filter(Boolean))].slice(0, 8);
+}
 
+function barberDoesService(barber, serviceId) {
+  return !Array.isArray(barber.serviceIds) ||
+    barber.serviceIds.length === 0 ||
+    barber.serviceIds.includes(serviceId);
+}
 
-      if (!service) {
+/* Fuente única para web: valida barbero + servicios y suma duración. */
+function resolveBookingServices(db, barberId, ids) {
+  if (!ids.length) return { status: 400, error: 'Selecciona al menos un servicio' };
 
-        return res
-          .status(404)
-          .json({
-            ok: false,
-            error:
-              'Servicio no disponible'
-          });
+  const barber = db.barbers.find(item => item.id === barberId && item.active !== false);
+  if (!barber || barber.acceptsBookings === false) {
+    return { status: 404, error: 'Barbero no disponible' };
+  }
 
-      }
+  const services = [];
+  for (const id of ids) {
+    const service = db.services.find(item =>
+      item.id === id && item.active !== false && item.bookingEnabled !== false);
+    if (!service) return { status: 404, error: 'Servicio no disponible' };
+    if (!barberDoesService(barber, id)) {
+      return { status: 400, error: `${service.name} no lo realiza este barbero` };
+    }
+    services.push(service);
+  }
 
+  const total = services.reduce((sum, s) => sum + Number(s.duration || 0), 0);
+  if (!(total > 0)) return { status: 400, error: 'Duración no válida' };
+  return { barber, services, total };
+}
 
-      const barber =
-        db.barbers.find(
-          item =>
-            item.id ===
-              barberId &&
-            item.active !==
-              false
-        );
+/* Horario semanal configurable (0=domingo … 6=sábado). */
+function weeklyHours(db) {
+  const out = {};
+  const barber = (db.barbers || []).find(b => b.active !== false);
 
+  for (let day = 0; day < 7; day++) {
+    const key = String(day);
+    const saved = db.hoursConfig?.[key];
+    if (saved) { out[key] = saved; continue; }
 
-      if (!barber) {
+    let periods = Array.isArray(barber?.schedule?.[key]) ? barber.schedule[key] : null;
+    if (!periods && db.schedule && Array.isArray(db.schedule.days)) {
+      periods = db.schedule.days.includes(day)
+        ? [[db.schedule.open || '08:00', db.schedule.breakStart || '12:00'],
+           [db.schedule.breakEnd || '13:30', db.schedule.close || '19:00']]
+        : [];
+    }
+    periods = periods || [];
 
-        return res
-          .status(404)
-          .json({
-            ok: false,
-            error:
-              'Barbero no disponible'
-          });
+    out[key] = periods.length === 0
+      ? { open: false, from: '08:00', to: '19:00', breakFrom: '', breakTo: '' }
+      : {
+          open: true,
+          from: periods[0][0],
+          to: periods[periods.length - 1][1],
+          breakFrom: periods.length > 1 ? periods[0][1] : '',
+          breakTo: periods.length > 1 ? periods[1][0] : ''
+        };
+  }
+  return out;
+}
 
-      }
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+app.get('/api/admin/hours', (req, res) => {
+  res.json({ ok: true, hours: weeklyHours(readDb()), custom: Boolean(readDb().hours) });
+});
 
-      const duration =
-        serviceDuration(
-          db,
-          serviceId
-        );
-
-
-      const slots =
-        availableStartsForDuration(
-          db,
-          date,
-          barberId,
-          duration
-        );
-
-
-      return res.json({
-
-        ok: true,
-
-        date,
-
-        barberId,
-
-        serviceId,
-
-        duration,
-
-        slots
-
-      });
-
-    } catch (error) {
-
-      console.error(
-        'ERROR CONSULTANDO DISPONIBILIDAD:',
-        error
-      );
-
-
-      return res
-        .status(500)
-        .json({
-          ok: false,
-          error:
-            'No se pudo consultar la disponibilidad'
-        });
-
+app.put('/api/admin/hours', (req, res) => {
+  try {
+    const input = req.body?.hours;
+    if (!input || typeof input !== 'object') {
+      return res.status(400).json({ ok: false, error: 'Faltan los horarios' });
     }
 
-  }
-);
+    const config = {};
+    const periods = {};
 
-
-/* =========================================================
-   CREAR RESERVA DESDE LA WEB
-========================================================= */
-
-app.post(
-  '/api/bookings',
-  (req, res) => {
-
-    try {
-
-      const {
-        name,
-        phone,
-        serviceId,
-        barberId,
-        date,
-        time,
-        source = 'web'
-      } = req.body;
-
-
-      if (
-        !name ||
-        !phone ||
-        !serviceId ||
-        !barberId ||
-        !date ||
-        !time
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error:
-              'Faltan datos obligatorios'
-          });
-
-      }
-
-
-      const db =
-        readDB();
-
-
-      const service =
-        db.services.find(
-          item =>
-            item.id ===
-              serviceId &&
-            item.active !==
-              false &&
-            item.bookingEnabled !==
-              false
-        );
-
-
-      if (!service) {
-
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error:
-              'Ese servicio no está disponible para reservas'
-          });
-
-      }
-
-
-      const barber =
-        db.barbers.find(
-          item =>
-            item.id ===
-              barberId &&
-            item.active !==
-              false
-        );
-
-
-      if (!barber) {
-
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error:
-              'Ese barbero no está disponible'
-          });
-
-      }
-
-
-      const duration =
-        serviceDuration(
-          db,
-          serviceId
-        );
-
-
-      const start =
-        toMinutes(
-          time
-        );
-
-
-      const available =
-        isIntervalAvailable(
-          db,
-          date,
-          barberId,
-          start,
-          duration
-        );
-
-
-      if (!available) {
-
-        return res
-          .status(409)
-          .json({
-            ok: false,
-            error:
-              'Ese horario acaba de ocuparse. Elige otro.'
-          });
-
-      }
-
-
-      const endTime =
-        toHHMM(
-          start +
-          duration
-        );
-
-
-      const booking = {
-
-        id:
-          `BK-${Date.now()}`,
-
-        name:
-          String(name)
-            .trim(),
-
-        phone:
-          String(phone)
-            .trim(),
-
-        serviceId,
-
-        barberId,
-
-        date,
-
-        time,
-
-        endTime,
-
-        cantidadPersonas:
-          1,
-
-        people: [
-          {
-            index: 1,
-            serviceId,
-            duration,
-            time,
-            endTime
-          }
-        ],
-
-        scheduleType:
-          'consecutive',
-
-        source,
-
-        status:
-          'confirmed',
-
-        paymentStatus:
-          'pending',
-
-        createdAt:
-          new Date()
-            .toISOString()
-
+    for (let day = 0; day < 7; day++) {
+      const key = String(day);
+      const d = input[key] || {};
+      const open = d.open === true;
+      const entry = {
+        open,
+        from: String(d.from || '08:00'),
+        to: String(d.to || '19:00'),
+        breakFrom: String(d.breakFrom || ''),
+        breakTo: String(d.breakTo || '')
       };
 
-
-      db.bookings.push(
-        booking
-      );
-
-
-      writeDB(db);
-
-
-      return res
-        .status(201)
-        .json({
-          ok: true,
-          booking
-        });
-
-    } catch (error) {
-
-      console.error(
-        'ERROR CREANDO RESERVA WEB:',
-        error
-      );
-
-
-      return res
-        .status(500)
-        .json({
-          ok: false,
-          error:
-            'No se pudo crear la reserva'
-        });
-
+      if (open) {
+        if (!HHMM.test(entry.from) || !HHMM.test(entry.to) || toMinutes(entry.from) >= toMinutes(entry.to)) {
+          return res.status(400).json({ ok: false, error: `Horario no válido (día ${day})` });
+        }
+        const hasBreak = entry.breakFrom || entry.breakTo;
+        if (hasBreak) {
+          if (!HHMM.test(entry.breakFrom) || !HHMM.test(entry.breakTo) ||
+              !(toMinutes(entry.from) < toMinutes(entry.breakFrom) &&
+                toMinutes(entry.breakFrom) < toMinutes(entry.breakTo) &&
+                toMinutes(entry.breakTo) < toMinutes(entry.to))) {
+            return res.status(400).json({ ok: false, error: `Descanso no válido (día ${day})` });
+          }
+          periods[key] = [[entry.from, entry.breakFrom], [entry.breakTo, entry.to]];
+        } else {
+          entry.breakFrom = ''; entry.breakTo = '';
+          periods[key] = [[entry.from, entry.to]];
+        }
+      } else {
+        periods[key] = [];
+      }
+      config[key] = entry;
     }
 
+    const db = readDb();
+    db.hoursConfig = config;
+    db.hours = periods;
+    writeDb(db);
+    res.json({ ok: true, hours: config });
+  } catch (error) {
+    console.error('ERROR GUARDANDO HORARIOS:', error);
+    res.status(500).json({ ok: false, error: 'No se pudieron guardar los horarios' });
   }
-);
+});
+
+/* ---------------- NEGOCIO ---------------- */
+
+app.put('/api/admin/business', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const data = {
+      name: cleanText(b.name, 80),
+      phone: cleanText(b.phone, 30),
+      email: cleanText(b.email, 120),
+      address: cleanText(b.address, 200),
+      description: cleanText(b.description, 500),
+      mapQuery: cleanText(b.mapQuery, 200),
+      mapUrl: cleanUrl(b.mapUrl),
+      instagram: cleanUrl(b.instagram),
+      tiktok: cleanUrl(b.tiktok),
+      facebook: cleanUrl(b.facebook)
+    };
+    if (!data.name) {
+      return res.status(400).json({ ok: false, error: 'Escribe el nombre del negocio' });
+    }
+    if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+      return res.status(400).json({ ok: false, error: 'Correo no válido' });
+    }
+
+    await saveSettingSection('negocio', data);
+
+    const db = readDb();
+    db.business = { ...db.business, name: data.name, phone: data.phone,
+      email: data.email, address: data.address, description: data.description };
+    writeDb(db);
+
+    res.json({ ok: true, business: data });
+  } catch (error) {
+    console.error('ERROR GUARDANDO NEGOCIO:', error);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar la información' });
+  }
+});
+
+/* ---------------- BARBEROS (nunca se borran) ---------------- */
+
+function applyBarberFields(db, barber, body, isNew) {
+  if (body.name !== undefined || isNew) {
+    const name = cleanText(body.name, 60);
+    if (!name) return 'Escribe el nombre del barbero';
+    barber.name = name;
+  }
+  if (body.phone !== undefined) barber.phone = cleanText(body.phone, 30);
+  if (body.description !== undefined) barber.description = cleanText(body.description, 300);
+  if (body.acceptsBookings !== undefined) barber.acceptsBookings = body.acceptsBookings === true;
+  if (body.active !== undefined) barber.active = body.active === true;
+  if (body.serviceIds !== undefined) {
+    if (!Array.isArray(body.serviceIds)) return 'Servicios no válidos';
+    const known = new Set(db.services.map(s => s.id));
+    const ids = [...new Set(body.serviceIds.map(String))];
+    if (ids.some(id => !known.has(id))) return 'Hay servicios que no existen';
+    barber.serviceIds = ids;
+  }
+  return null;
+}
+
+app.post('/api/admin/barbers', (req, res) => {
+  try {
+    const db = readDb();
+    const barber = { id: createId('barber'), active: true, acceptsBookings: true, serviceIds: [] };
+    const error = applyBarberFields(db, barber, req.body || {}, true);
+    if (error) return res.status(400).json({ ok: false, error });
+    db.barbers.push(barber);
+    writeDb(db);
+    res.status(201).json({ ok: true, barber });
+  } catch (error) {
+    console.error('ERROR CREANDO BARBERO:', error);
+    res.status(500).json({ ok: false, error: 'No se pudo crear el barbero' });
+  }
+});
+
+app.patch('/api/admin/barbers/:id', (req, res) => {
+  try {
+    const db = readDb();
+    const barber = db.barbers.find(b => String(b.id) === String(req.params.id));
+    if (!barber) return res.status(404).json({ ok: false, error: 'Barbero no encontrado' });
+
+    const error = applyBarberFields(db, barber, req.body || {}, false);
+    if (error) return res.status(400).json({ ok: false, error });
+
+    const today = localDateParts(0);
+    const upcoming = db.bookings.filter(b =>
+      b.barberId === barber.id && b.status !== 'cancelled' &&
+      b.status !== 'completed' && String(b.date) >= today).length;
+
+    writeDb(db);
+    res.json({ ok: true, barber, upcomingBookings: upcoming });
+  } catch (error) {
+    console.error('ERROR EDITANDO BARBERO:', error);
+    res.status(500).json({ ok: false, error: 'No se pudo editar el barbero' });
+  }
+});
+
+/* ---------------- IMÁGENES (PostgreSQL) ---------------- */
+
+app.get('/api/admin/media', async (req, res) => {
+  try {
+    await ensureMediaTable();
+    const r = await pool.query(
+      'SELECT id, kind, created_at, updated_at FROM media_assets ORDER BY created_at ASC');
+    res.json({ ok: true, media: r.rows });
+  } catch (error) {
+    console.error('ERROR LISTANDO MEDIA:', error);
+    res.status(500).json({ ok: false, error: 'No se pudieron consultar las imágenes' });
+  }
+});
+
+app.post('/api/admin/media', async (req, res) => {
+  try {
+    const kind = String(req.body?.kind || '');
+    const image = String(req.body?.image || '');
+    const ref = String(req.body?.ref || '').replace(/[^A-Za-z0-9_-]/g, '');
+
+    if (!MEDIA_KINDS.includes(kind)) {
+      return res.status(400).json({ ok: false, error: 'Tipo de imagen no válido' });
+    }
+    if (!validImageData(image)) {
+      return res.status(400).json({ ok: false, error: 'Imagen no válida o demasiado grande' });
+    }
+
+    let id = kind;
+    if (kind === 'gallery') {
+      id = createId('gallery');
+    } else if (kind === 'barber' || kind === 'service') {
+      const db = readDb();
+      const list = kind === 'barber' ? db.barbers : db.services;
+      if (!ref || !list.some(item => item.id === ref)) {
+        return res.status(404).json({ ok: false, error: 'Elemento no encontrado' });
+      }
+      id = `${kind}_${ref}`;
+    }
+
+    await ensureMediaTable();
+    await pool.query(
+      `INSERT INTO media_assets (id, kind, data, created_at, updated_at)
+       VALUES ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [id, kind, image]
+    );
+    res.json({ ok: true, id, kind });
+  } catch (error) {
+    console.error('ERROR GUARDANDO IMAGEN:', error);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar la imagen' });
+  }
+});
+
+/* Solo elimina la imagen; nunca borra barberos, servicios ni reservas. */
+app.delete('/api/admin/media/:id', async (req, res) => {
+  try {
+    await ensureMediaTable();
+    const id = String(req.params.id).replace(/[^A-Za-z0-9_-]/g, '');
+    const r = await pool.query('DELETE FROM media_assets WHERE id = $1', [id]);
+    res.json({ ok: true, deleted: r.rowCount || 0 });
+  } catch (error) {
+    console.error('ERROR ELIMINANDO IMAGEN:', error);
+    res.status(500).json({ ok: false, error: 'No se pudo eliminar la imagen' });
+  }
+});
+
+app.get('/api/public/media/:id', async (req, res) => {
+  try {
+    await ensureMediaTable();
+    const id = String(req.params.id).replace(/[^A-Za-z0-9_-]/g, '');
+    const r = await pool.query('SELECT data FROM media_assets WHERE id = $1', [id]);
+    if (!r.rows.length) return res.status(404).end();
+    const data = r.rows[0].data;
+    const match = /^data:(image\/(?:jpeg|png|webp));base64,/.exec(data);
+    if (!match) return res.status(404).end();
+    res.set({
+      'Content-Type': match[1],
+      'Cache-Control': 'public, max-age=86400',
+      'X-Content-Type-Options': 'nosniff'
+    });
+    res.send(Buffer.from(data.slice(match[0].length), 'base64'));
+  } catch (error) {
+    console.error('ERROR SIRVIENDO IMAGEN:', error);
+    res.status(500).end();
+  }
+});
+
+/* ---------------- RESPALDO ADMINISTRATIVO ---------------- */
+app.get('/api/admin/backup', async (req, res) => {
+  try {
+    const db = readDb();
+    let settings = {};
+    try { settings = await readSettingsMap(); } catch (error) { console.error('ERROR LEYENDO SETTINGS PARA RESPALDO:', error); }
+    const backup = { version: 1, generatedAt: new Date().toISOString(), business: db.business || {}, barbers: db.barbers || [], services: db.services || [], schedule: db.schedule || {}, hoursConfig: db.hoursConfig || {}, bookings: db.bookings || [], settings };
+    const stamp = localDateParts(0);
+    res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="el-master-respaldo-${stamp}.json"`, 'Cache-Control': 'no-store' });
+    res.send(JSON.stringify(backup, null, 2));
+  } catch (error) {
+    console.error('ERROR GENERANDO RESPALDO:', error);
+    res.status(500).json({ ok: false, error: 'No se pudo generar el respaldo' });
+  }
+});
+
+/* ---------------- DATOS PÚBLICOS (sin secretos) ---------------- */
+
+app.get('/api/public/site', async (req, res) => {
+  const db = readDb();
+  let s = {};
+  let media = [];
+
+  try {
+    await ensureMediaTable();
+    s = await readSettingsMap();
+    media = (await pool.query(
+      'SELECT id, kind, updated_at FROM media_assets ORDER BY created_at ASC')).rows;
+  } catch (error) {
+    console.error('ERROR /api/public/site (PostgreSQL):', error);
+  }
+
+  const has = new Map(media.map(m => [m.id, m]));
+  const url = id => has.has(id)
+    ? `/api/public/media/${id}?v=${new Date(has.get(id).updated_at).getTime()}`
+    : null;
+
+  const neg = s.negocio || {};
+  const pag = s.pagina || {};
+  const apa = s.apariencia || {};
+  const mul = s.multimedia || {};
+  const adv = s.avanzada || {};
+  const b = db.business || {};
+
+  const services = db.services
+    .filter(x => x.active !== false && x.bookingEnabled !== false)
+    .map(x => ({
+      id: x.id, name: cleanText(x.name, 80),
+      price: Number(x.price) || 0, duration: Number(x.duration) || 0,
+      image: url('service_' + x.id)
+    }));
+  const bookable = services.map(x => x.id);
+
+  const barbers = db.barbers.filter(x => x.active !== false).map(x => ({
+    id: x.id, name: cleanText(x.name, 60),
+    description: cleanText(x.description, 300),
+    acceptsBookings: x.acceptsBookings !== false,
+    photo: url('barber_' + x.id),
+    serviceIds: (Array.isArray(x.serviceIds) && x.serviceIds.length ? x.serviceIds : bookable)
+      .filter(id => bookable.includes(id))
+  }));
+
+  const videos = (Array.isArray(mul.videos) ? mul.videos : []).slice(0, 12)
+    .map(v => ({ title: cleanText(v.title, 80), url: cleanUrl(v.url) }))
+    .filter(v => v.url);
+
+  res.json({
+    ok: true,
+    business: {
+      name: cleanText(neg.name || b.name, 80),
+      phone: cleanText(neg.phone ?? b.phone, 30),
+      email: cleanText(neg.email ?? b.email, 120),
+      address: cleanText(neg.address ?? b.address, 200),
+      description: cleanText(neg.description ?? b.description, 500),
+      mapQuery: cleanText(neg.mapQuery, 200),
+      mapUrl: cleanUrl(neg.mapUrl),
+      instagram: cleanUrl(neg.instagram),
+      tiktok: cleanUrl(neg.tiktok),
+      facebook: cleanUrl(neg.facebook)
+    },
+    page: {
+      title: cleanText(pag.title, 80),
+      slogan: cleanText(pag.slogan, 120),
+      description: cleanText(pag.description, 300),
+      welcome: cleanText(pag.welcome, 300),
+      ctaText: cleanText(pag.ctaText, 30) || 'Reservar ahora',
+      template: ['elegante', 'moderna', 'minimalista'].includes(pag.template) ? pag.template : 'elegante'
+    },
+    theme: {
+      primary: cleanColor(apa.primary, '#d4af37'),
+      secondary: cleanColor(apa.secondary, '#1a1a1a'),
+      background: cleanColor(apa.background, '#080808'),
+      text: cleanColor(apa.text, '#ffffff'),
+      font: FONT_KEYS.includes(apa.font) ? apa.font : 'system'
+    },
+    media: {
+      logo: url('logo'), cover: url('cover'), local: url('local'),
+      gallery: media.filter(m => m.kind === 'gallery').map(m => url(m.id))
+    },
+    advanced: { footerText: cleanText(adv.footerText, 120), radius: Math.max(0, Math.min(40, Number(adv.radius) || 16)), showGallery: adv.showGallery !== false, showVideos: adv.showVideos !== false, showSocial: adv.showSocial !== false },
+    videos,
+    services,
+    barbers,
+    hours: weeklyHours(db)
+  });
+});
+
+/* ---------------- DISPONIBILIDAD (web y Elia comparten motor) ---------------- */
+
+app.get('/api/availability', (req, res) => {
+  try {
+    const { date, barberId } = req.query;
+    const ids = parseServiceIds(req.query.serviceIds ?? req.query.serviceId);
+
+    if (!date || !barberId || !ids.length) {
+      return res.status(400).json({ ok: false, error: 'date, barberId y serviceIds son obligatorios' });
+    }
+    if (!isRealDate(date)) {
+      return res.status(400).json({ ok: false, error: 'Fecha no válida' });
+    }
+
+    const db = readDb();
+    const resolved = resolveBookingServices(db, String(barberId), ids);
+    if (resolved.error) {
+      return res.status(resolved.status).json({ ok: false, error: resolved.error });
+    }
+
+    const today = localDateParts(0);
+    let slots = date < today
+      ? []
+      : availableStartsForDuration(db, date, String(barberId), resolved.total);
+
+    if (date === today) {
+      const now = nowMinutesLocal();
+      slots = slots.filter(time => toMinutes(time) > now);
+    }
+
+    res.json({
+      ok: true, date, barberId, serviceId: ids[0], serviceIds: ids,
+      duration: resolved.total, slots
+    });
+  } catch (error) {
+    console.error('ERROR CONSULTANDO DISPONIBILIDAD:', error);
+    res.status(500).json({ ok: false, error: 'No se pudo consultar la disponibilidad' });
+  }
+});
+
+/* ---------------- CREAR RESERVA WEB (uno o varios servicios) ---------------- */
+
+app.post('/api/bookings', (req, res) => {
+  try {
+    const { name, phone, barberId, date, time } = req.body || {};
+    const ids = parseServiceIds(req.body?.serviceIds ?? req.body?.serviceId);
+
+    const cleanName = cleanText(name, 80);
+    const cleanPhone = cleanText(phone, 30);
+
+    if (cleanName.length < 2 || !cleanPhone || !barberId || !date || !time) {
+      return res.status(400).json({ ok: false, error: 'Faltan datos obligatorios' });
+    }
+    if (!/^\+?[\d\s()-]{7,20}$/.test(cleanPhone)) {
+      return res.status(400).json({ ok: false, error: 'Teléfono no válido' });
+    }
+    if (!isRealDate(date) || !HHMM.test(String(time))) {
+      return res.status(400).json({ ok: false, error: 'Fecha u hora no válidas' });
+    }
+
+    const db = readDb();
+    const resolved = resolveBookingServices(db, String(barberId), ids);
+    if (resolved.error) {
+      return res.status(resolved.status === 404 ? 400 : resolved.status)
+        .json({ ok: false, error: resolved.error });
+    }
+
+    const today = localDateParts(0);
+    const start = toMinutes(time);
+    if (date < today || (date === today && start <= nowMinutesLocal())) {
+      return res.status(400).json({ ok: false, error: 'Esa hora ya pasó. Elige otra.' });
+    }
+
+    if (!isIntervalAvailable(db, date, String(barberId), start, resolved.total)) {
+      return res.status(409).json({ ok: false, error: 'Ese horario acaba de ocuparse. Elige otro.' });
+    }
+
+    let cursor = start;
+    const people = resolved.services.map(service => {
+      const duration = Number(service.duration);
+      const entry = {
+        index: 1, serviceId: service.id, duration,
+        time: toHHMM(cursor), endTime: toHHMM(cursor + duration)
+      };
+      cursor += duration;
+      return entry;
+    });
+
+    const booking = {
+      id: `BK-${Date.now()}`,
+      name: cleanName,
+      phone: cleanPhone,
+      serviceId: ids[0],
+      serviceIds: ids,
+      barberId: String(barberId),
+      date,
+      time: toHHMM(start),
+      endTime: toHHMM(start + resolved.total),
+      totalDuration: resolved.total,
+      cantidadPersonas: 1,
+      people,
+      scheduleType: 'consecutive',
+      source: 'web',
+      status: 'confirmed',
+      paymentStatus: 'pending',
+      createdAt: new Date().toISOString()
+    };
+
+    db.bookings.push(booking);
+    writeDb(db);
+    res.status(201).json({ ok: true, booking });
+  } catch (error) {
+    console.error('ERROR CREANDO RESERVA WEB:', error);
+    res.status(500).json({ ok: false, error: 'No se pudo crear la reserva' });
+  }
+});
 
 
 /* =========================================================
@@ -8732,6 +9009,17 @@ app.post(
       const db =
         readDB();
 
+      let eliaSettings = {};
+      try {
+        const allSettings = await readSettingsMap();
+        eliaSettings = allSettings.mensajes || {};
+      } catch (error) {
+        console.error('ERROR CARGANDO CONFIGURACIÓN DE ELIA:', error);
+      }
+
+      if (eliaSettings.enabled === false) {
+        return;
+      }
 
       let session =
         getSession(
@@ -8758,11 +9046,11 @@ app.post(
 
           from,
 
-          '❌ Listo. El proceso de reserva quedó cancelado.\n\n' +
-
-          'No se guardó ninguna cita. Cuando quieras comenzar otra, ' +
-
-          'escríbeme “quiero reservar”. 💈'
+          eliaSettings.cancel || (
+            '❌ Listo. El proceso de reserva quedó cancelado.\n\n' +
+            'No se guardó ninguna cita. Cuando quieras comenzar otra, ' +
+            'escríbeme “quiero reservar”. 💈'
+          )
 
         );
 
@@ -8790,9 +9078,10 @@ app.post(
 
           from,
 
-          '😊 ¡Con gusto! Fue un placer atenderte.\n\n' +
-
-          'Cuando necesites otra cita, escríbeme “quiero reservar”. 💈'
+          eliaSettings.closing || (
+            '😊 ¡Con gusto! Fue un placer atenderte.\n\n' +
+            'Cuando necesites otra cita, escríbeme “quiero reservar”. 💈'
+          )
 
         );
 
@@ -9113,11 +9402,11 @@ app.post(
 
           from,
 
-          '👋 ¡Hola! Bienvenido a El Máster 💈\n\n' +
-
-          'Con gusto puedo ayudarte.\n' +
-
-          'Dime cuántos turnos deseas reservar.'
+          eliaSettings.welcome || (
+            '👋 ¡Hola! Bienvenido a El Máster 💈\n\n' +
+            'Con gusto puedo ayudarte.\n' +
+            'Dime cuántos turnos deseas reservar.'
+          )
 
         );
 
