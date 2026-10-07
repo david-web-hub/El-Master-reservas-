@@ -1,621 +1,575 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#080808">
-
-  <title>El Máster | Reservas</title>
-
-  <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    html {
-      scroll-behavior: smooth;
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-      background: #080808;
-      color: #ffffff;
-      line-height: 1.5;
-    }
-
-    header {
-      min-height: 70vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      text-align: center;
-      padding: 40px 20px;
-      background: radial-gradient(circle at top, #292929 0%, #080808 60%);
-    }
-
-    .hero {
-      width: 100%;
-      max-width: 700px;
-    }
-
-    .logo {
-      color: #d0aa32;
-      font-size: 14px;
-      font-weight: 800;
-      letter-spacing: 5px;
-      margin-bottom: 18px;
-    }
-
-    h1 {
-      font-size: clamp(50px, 13vw, 90px);
-      line-height: 1;
-      margin-bottom: 18px;
-    }
-
-    .subtitle {
-      color: #aaaaaa;
-      font-size: 18px;
-      margin-bottom: 30px;
-    }
-
-    .btn {
-      display: inline-block;
-      padding: 16px 25px;
-      border: none;
-      border-radius: 12px;
-      background: #d0aa32;
-      color: #080808;
-      font-size: 16px;
-      font-weight: 800;
-      text-decoration: none;
-      cursor: pointer;
-    }
-
-    main {
-      max-width: 760px;
-      margin: auto;
-      padding: 50px 18px 100px;
-    }
-
-    .section-title {
-      font-size: 30px;
-      margin-bottom: 8px;
-    }
-
-    .section-description {
-      color: #999999;
-      margin-bottom: 25px;
-    }
-
-    .services {
-      display: grid;
-      gap: 14px;
-      margin-bottom: 55px;
-    }
-
-    .service {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 15px;
-      padding: 20px;
-      background: #111111;
-      border: 1px solid #292929;
-      border-radius: 16px;
-    }
-
-    .service h3 {
-      font-size: 18px;
-    }
-
-    .service small {
-      color: #888888;
-    }
-
-    .price {
-      color: #d6b544;
-      font-size: 20px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .booking {
-      padding: 25px;
-      background: #111111;
-      border: 1px solid #292929;
-      border-radius: 20px;
-    }
-
-    label {
-      display: block;
-      margin: 18px 0 7px;
-      font-size: 14px;
-      font-weight: 700;
-    }
-
-    input,
-    select {
-      width: 100%;
-      padding: 15px;
-      border: 1px solid #333333;
-      border-radius: 10px;
-      background: #191919;
-      color: #ffffff;
-      font-size: 16px;
-      outline: none;
-    }
-
-    input:focus,
-    select:focus {
-      border-color: #d0aa32;
-    }
-
-    #horarios {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 9px;
-      margin-top: 10px;
-    }
-
-    .hora {
-      padding: 12px 5px;
-      border: 1px solid #333333;
-      border-radius: 9px;
-      background: #191919;
-      color: #ffffff;
-      cursor: pointer;
-    }
-
-    .hora.active {
-      background: #d0aa32;
-      border-color: #d0aa32;
-      color: #080808;
-      font-weight: 800;
-    }
-
-    .hora:disabled {
-      opacity: 0.25;
-      cursor: not-allowed;
-    }
-
-    #reservar {
-      width: 100%;
-      margin-top: 25px;
-    }
-
-    .info {
-      margin-top: 45px;
-      text-align: center;
-      color: #999999;
-    }
-
-    .info strong {
-      color: #ffffff;
-    }
-
-    footer {
-      padding: 35px 20px;
-      border-top: 1px solid #222222;
-      text-align: center;
-      color: #777777;
-    }
-
-    @media (max-width: 500px) {
-      #horarios {
-        grid-template-columns: repeat(2, 1fr);
-      }
-
-      .booking {
-        padding: 18px;
-      }
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#080808">
+<title>Reservas</title>
+<style>
+:root{--primary:#d4af37;--secondary:#1a1a1a;--bg:#080808;--text:#fff;--muted:rgba(255,255,255,.62);--line:rgba(255,255,255,.14);--font:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;--radius:16px}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.45;-webkit-text-size-adjust:100%}
+body.tpl-moderna{--radius:24px}
+body.tpl-minimalista{--radius:6px}
+img{max-width:100%;display:block}
+button{font:inherit;color:inherit;cursor:pointer}
+a{color:inherit}
+.wrap{max-width:1000px;margin:0 auto;padding:0 16px}
+.hero{position:relative;min-height:72vh;display:flex;align-items:flex-end;background:linear-gradient(160deg,var(--secondary),var(--bg));background-size:cover;background-position:center;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.35) 0%,rgba(0,0,0,.15) 35%,var(--bg) 100%)}
+.hero .wrap{position:relative;width:100%;padding-top:24px;padding-bottom:30px}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+.brand img{height:64px;width:auto;max-width:180px;object-fit:contain}
+.brand span{font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--primary);font-size:20px}
+h1{font-size:clamp(34px,9vw,60px);line-height:1.05;font-weight:800;max-width:14ch}
+h1 em{display:block;font-style:normal;color:var(--primary)}
+.hero p{color:var(--muted);margin:12px 0 22px;font-size:17px;max-width:46ch}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:var(--radius);padding:16px 26px;font-weight:800;font-size:16px;background:var(--primary);color:var(--bg);text-decoration:none}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+.btn.gold-outline{background:transparent;color:var(--primary);border:1px solid var(--primary)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.nav{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.nav .wrap{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;padding-top:6px;padding-bottom:6px}
+.nav button{background:none;border:0;padding:8px 2px;font-size:12px;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:3px}
+.nav button b{font-size:20px;color:var(--primary);font-weight:400}
+section{padding:34px 0 8px;scroll-margin-top:64px}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:16px}
+h2{font-size:24px}
+.sub{color:var(--muted);font-size:14px}
+.pill{border:1px solid var(--line);background:transparent;border-radius:999px;padding:8px 16px;font-size:14px}
+.grid{display:grid;gap:12px}
+.g4{grid-template-columns:repeat(2,1fr)}
+.g6{grid-template-columns:repeat(3,1fr)}
+.card{background:var(--secondary);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.card .ph{aspect-ratio:4/3;background:rgba(255,255,255,.05);display:grid;place-items:center;font-size:30px;overflow:hidden}
+.card .ph img{width:100%;height:100%;object-fit:cover}
+.card .body{padding:12px}
+.card strong{display:block}
+.card small{color:var(--muted);display:block}
+.thumb{aspect-ratio:1;border-radius:calc(var(--radius) - 4px);overflow:hidden;border:1px solid var(--line);padding:0;background:var(--secondary)}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.video{aspect-ratio:16/10;position:relative}
+.video iframe,.video video{width:100%;height:100%;border:0;background:#000}
+.vt{padding:8px 10px;font-size:13px}
+.info{display:grid;gap:14px}
+.rows{background:var(--secondary);border:1px solid var(--line);border-radius:var(--radius);padding:6px 16px}
+.row{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}
+.row b{color:var(--primary);width:22px;text-align:center;font-weight:400}
+.row small{display:block;color:var(--muted)}
+.row a{text-decoration:none}
+.map{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;min-height:220px;background:var(--secondary)}
+.map iframe{width:100%;height:100%;min-height:240px;border:0}
+.local{border-radius:var(--radius);width:100%;max-height:260px;object-fit:cover;border:1px solid var(--line)}
+.social{display:flex;gap:12px;justify-content:center;padding:26px 0 8px}
+.social a{border:1px solid var(--line);border-radius:50%;width:46px;height:46px;display:grid;place-items:center;text-decoration:none;font-size:13px;font-weight:700}
+footer{text-align:center;color:var(--muted);font-size:13px;padding:18px 16px 40px}
+.empty{color:var(--muted);padding:18px;border:1px dashed var(--line);border-radius:var(--radius);text-align:center;grid-column:1/-1}
+.barber{text-align:center}
+.barber .ph{aspect-ratio:1}
+.chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px}
+/* modal */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:50;display:none;align-items:flex-end;justify-content:center}
+.ov.show{display:flex}
+.sheet{background:var(--bg);width:100%;max-width:560px;max-height:92vh;overflow:auto;border:1px solid var(--line);border-radius:22px 22px 0 0;padding:20px 18px calc(24px + env(safe-area-inset-bottom))}
+.sheet.wide{max-width:900px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.x{background:none;border:0;font-size:28px;line-height:1;padding:4px 8px}
+.steps{display:flex;gap:6px;margin:10px 0 16px}
+.steps i{flex:1;height:4px;border-radius:4px;background:var(--line)}
+.steps i.on{background:var(--primary)}
+.opt{display:flex;gap:12px;align-items:center;width:100%;text-align:left;background:var(--secondary);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-bottom:10px}
+.opt.sel{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary) inset}
+.opt .av{width:54px;height:54px;border-radius:50%;overflow:hidden;background:rgba(255,255,255,.07);display:grid;place-items:center;flex-shrink:0}
+.opt .av img{width:100%;height:100%;object-fit:cover}
+.opt .grow{flex:1;min-width:0}
+.opt small{color:var(--muted);display:block}
+.tot{display:flex;justify-content:space-between;padding:12px 0;font-weight:700}
+label.f{display:block;margin:12px 0 6px;font-size:14px;font-weight:600}
+input.in{width:100%;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--secondary);color:var(--text);font:inherit;font-size:16px}
+.slots{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+.slot{padding:12px 4px;border-radius:10px;border:1px solid var(--line);background:var(--secondary)}
+.slot.sel{background:var(--primary);color:var(--bg);border-color:var(--primary);font-weight:800}
+.sum{background:var(--secondary);border:1px solid var(--line);border-radius:var(--radius);padding:4px 14px;margin:10px 0}
+.sum div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.sum div:last-child{border:0}
+.sum span:first-child{color:var(--muted)}
+.sum span:last-child{text-align:right}
+.err{color:#ff8a8a;margin-top:10px;font-size:14px;min-height:18px}
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:60;display:none;align-items:center;justify-content:center}
+.lb.show{display:flex}
+.lb img{max-width:96vw;max-height:88vh;object-fit:contain}
+.lb button{position:absolute;background:rgba(255,255,255,.12);border:0;color:#fff;font-size:28px;width:48px;height:48px;border-radius:50%}
+.lb .cl{top:14px;right:14px}.lb .pv{left:10px}.lb .nx{right:10px}
+@media(min-width:700px){
+.g4{grid-template-columns:repeat(4,1fr)}.g6{grid-template-columns:repeat(6,1fr)}
+.info{grid-template-columns:1fr 1fr}
+.ov{align-items:center}.sheet{border-radius:22px}
+.slots{grid-template-columns:repeat(6,1fr)}
+.nav button{flex-direction:row;justify-content:center;font-size:14px;gap:8px}
+}
+</style>
 </head>
-
 <body>
 
-<header>
-  <div class="hero">
-    <div class="logo">BARBER STUDIO</div>
+<header class="hero" id="hero"><div class="wrap" id="heroInner"></div></header>
+<nav class="nav" id="nav"><div class="wrap">
+  <button data-go="servicios"><b>✂</b>Servicios</button>
+  <button data-go="galeria"><b>▣</b>Galería</button>
+  <button data-go="videos"><b>▶</b>Videos</button>
+  <button data-go="informacion"><b>⌖</b>Información</button>
+  <button data-go="barberos"><b>☺</b>Barberos</button>
+</div></nav>
 
-    <h1>EL MÁSTER</h1>
-
-    <p class="subtitle">
-      Tu estilo. Tu momento. Reserva tu cita sin esperar.
-    </p>
-
-    <a href="#reservas" class="btn">
-      RESERVAR AHORA
-    </a>
-  </div>
-</header>
-
-<main>
-
-  <h2 class="section-title">Servicios</h2>
-
-  <p class="section-description">
-    Selecciona el servicio que necesitas.
-  </p>
-
-  <div class="services">
-
-    <div class="service">
-      <div>
-        <h3>✂️ Corte de cabello</h3>
-        <small>40 minutos</small>
-      </div>
-
-      <div class="price">
-        $5.00
-      </div>
-    </div>
-
-    <div class="service">
-      <div>
-        <h3>🧔 Barba</h3>
-        <small>20 minutos</small>
-      </div>
-
-      <div class="price">
-        $2.00
-      </div>
-    </div>
-
-    <div class="service">
-      <div>
-        <h3>⚡ Diseños</h3>
-        <small>15 minutos</small>
-      </div>
-
-      <div class="price">
-        $1.50
-      </div>
-    </div>
-
-  </div>
-
-  <section id="reservas" class="booking">
-
-    <h2 class="section-title">
-      Reserva tu cita
-    </h2>
-
-    <p class="section-description">
-      Barbero: <strong>Máster</strong>
-    </p>
-
-    <label for="servicio">
-      Servicio
-    </label>
-
-    <select id="servicio">
-      <option value="">
-        Selecciona un servicio
-      </option>
-
-      <option value="corte">
-        Corte de cabello — $5.00
-      </option>
-
-      <option value="barba">
-        Barba — $2.00
-      </option>
-
-      <option value="diseno">
-        Diseño — $1.50
-      </option>
-    </select>
-
-    <label for="fecha">
-      Fecha
-    </label>
-
-    <input
-      type="date"
-      id="fecha"
-    >
-
-    <label>
-      Horarios disponibles
-    </label>
-
-    <div id="horarios">
-      <p style="color:#777; grid-column:1/-1;">
-        Selecciona primero una fecha.
-      </p>
-    </div>
-
-    <label for="nombre">
-      Tu nombre
-    </label>
-
-    <input
-      type="text"
-      id="nombre"
-      placeholder="Ej. David"
-      autocomplete="name"
-    >
-
-    <label for="telefono">
-      WhatsApp
-    </label>
-
-    <input
-      type="tel"
-      id="telefono"
-      placeholder="Ej. 0991234567"
-      autocomplete="tel"
-    >
-
-    <button
-      type="button"
-      id="reservar"
-      class="btn"
-    >
-      CONFIRMAR RESERVA
-    </button>
-
-  </section>
-
-  <div class="info">
-    <p>
-      <strong>Horario de atención</strong>
-    </p>
-
-    <p>
-      Lunes a sábado
-    </p>
-
-    <p>
-      8:00 a. m. – 7:00 p. m.
-    </p>
-
-    <p>
-      Descanso: 12:00 p. m. – 1:30 p. m.
-    </p>
-  </div>
-
+<main class="wrap" id="main">
+  <section id="servicios"></section>
+  <section id="galeria"></section>
+  <section id="videos"></section>
+  <section id="informacion"></section>
+  <section id="barberos"></section>
+  <div class="social" id="social"></div>
 </main>
+<footer id="foot"></footer>
 
-<footer>
-  © El Máster Barber Studio
-</footer>
+<div class="ov" id="bookOv"><div class="sheet" id="sheet"></div></div>
+<div class="ov" id="galOv"><div class="sheet wide"><div class="top"><h2>Galería</h2><button class="x" id="galClose" aria-label="Cerrar">×</button></div><div class="grid g6" id="galAll"></div></div></div>
+<div class="lb" id="lb"><button class="cl" id="lbClose" aria-label="Cerrar">×</button><button class="pv" id="lbPrev" aria-label="Anterior">‹</button><img id="lbImg" alt=""><button class="nx" id="lbNext" aria-label="Siguiente">›</button></div>
 
 <script>
-  const fecha = document.getElementById("fecha");
-  const horarios = document.getElementById("horarios");
-  const botonReservar = document.getElementById("reservar");
+(function(){
+"use strict";
 
-  let horaSeleccionada = "";
+const $ = id => document.getElementById(id);
+const FONTS = {
+  system: 'system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif',
+  moderna: '"Trebuchet MS",Arial,sans-serif',
+  elegante: 'Georgia,"Times New Roman",serif',
+  clasica: '"Palatino Linotype",Palatino,serif'
+};
+const DAYS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+const DAY_ORDER = [1,2,3,4,5,6,0];
 
-  const hoy = new Date();
+let site = null;
+let galleryIndex = 0;
 
-  const yyyy = hoy.getFullYear();
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === false || v == null) continue;
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+const clear = el => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+const money = n => '$' + Number(n || 0).toFixed(2);
+const toMin = t => { const [a, b] = t.split(':').map(Number); return a * 60 + b; };
+const toHHMM = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+const dur = m => m >= 60 ? (Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '')) : m + ' minutos';
 
-  const mm = String(
-    hoy.getMonth() + 1
-  ).padStart(2, "0");
+function localToday() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function prettyDate(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' });
+}
 
-  const dd = String(
-    hoy.getDate()
-  ).padStart(2, "0");
+/* ---------------- carga ---------------- */
 
-  fecha.min = `${yyyy}-${mm}-${dd}`;
+async function load() {
+  try {
+    const r = await fetch('/api/public/site');
+    if (!r.ok) throw new Error('http ' + r.status);
+    site = await r.json();
+    render();
+  } catch (e) {
+    clear($('heroInner')).append(
+      h('h1', {}, 'No pudimos cargar la información'),
+      h('p', {}, 'Revisa tu conexión e intenta nuevamente.'),
+      h('button', { class: 'btn', onclick: load }, 'Reintentar'));
+  }
+}
 
-  fecha.addEventListener(
-    "change",
-    cargarHorarios
-  );
+function render() {
+  const t = site.theme, b = site.business, p = site.page;
+  const root = document.documentElement.style;
+  root.setProperty('--primary', t.primary);
+  root.setProperty('--secondary', t.secondary);
+  root.setProperty('--bg', t.background);
+  root.setProperty('--text', t.text);
+  root.setProperty('--font', FONTS[t.font] || FONTS.system);
+  if (site.advanced && Number.isFinite(Number(site.advanced.radius))) root.setProperty('--radius', Number(site.advanced.radius) + 'px');
+  document.body.className = 'tpl-' + p.template;
+  document.querySelector('meta[name=theme-color]').setAttribute('content', t.background);
 
-  async function cargarHorarios() {
+  const title = p.title || b.name || 'Reservas';
+  document.title = title;
 
-    horaSeleccionada = "";
-
-    if (!fecha.value) {
-      return;
-    }
-
-    const dia = new Date(
-      fecha.value + "T12:00:00"
-    ).getDay();
-
-    if (dia === 0) {
-
-      horarios.innerHTML =
-        '<p style="color:#aaa;grid-column:1/-1;">Los domingos no atendemos.</p>';
-
-      return;
-    }
-
-    horarios.innerHTML =
-      '<p style="color:#777;grid-column:1/-1;">Consultando horarios...</p>';
-
-    try {
-
-      const respuesta = await fetch(
-      `/api/availability?date=${encodeURIComponent(fecha.value)}&barberId=master&serviceId=${encodeURIComponent(servicio.value)}`
-      );
-
-      if (!respuesta.ok) {
-        throw new Error(
-          "No se pudieron consultar los horarios."
-        );
-      }
-
-      const datos =
-        await respuesta.json();
-
-      mostrarHorarios(
-        datos.slots || []
-      );
-
-    } catch (error) {
-
-      horarios.innerHTML =
-        '<p style="color:#aaa;grid-column:1/-1;">No pudimos consultar los horarios. Intenta nuevamente.</p>';
-
-    }
+  if (site.media.logo) {
+    const ic = h('link', { rel: 'icon', href: site.media.logo });
+    document.head.append(ic);
   }
 
-  function mostrarHorarios(lista) {
+  renderHero(title);
+  renderServices();
+  if (site.advanced?.showGallery === false) $('galeria').style.display = 'none'; else { $('galeria').style.display = ''; renderGallery(); }
+  if (site.advanced?.showVideos === false) $('videos').style.display = 'none'; else { $('videos').style.display = ''; renderVideos(); }
+  renderInfo();
+  renderBarbers();
+  if (site.advanced?.showSocial === false) clear($('social')); else renderSocial();
+  const footerExtra = site.advanced?.footerText ? ' · ' + site.advanced.footerText : '';
+  clear($('foot')).append('© ' + new Date().getFullYear() + ' ' + (b.name || title) + footerExtra);
+}
 
-    horarios.innerHTML = "";
+function renderHero(title) {
+  const b = site.business, p = site.page;
+  const hero = $('hero');
+  hero.style.backgroundImage = site.media.cover ? 'url("' + site.media.cover + '")' : '';
+  const inner = clear($('heroInner'));
+  inner.append(
+    h('div', { class: 'brand' },
+      site.media.logo ? h('img', { src: site.media.logo, alt: b.name || title }) : null,
+      !site.media.logo || p.title ? h('span', {}, p.title || b.name || title) : null),
+    h('h1', {}, p.slogan || title),
+    p.description || b.description ? h('p', {}, p.description || b.description) : null,
+    h('button', { class: 'btn', id: 'ctaBtn', onclick: openBooking }, '📅 ' + p.ctaText));
+}
 
-    if (
-      !Array.isArray(lista) ||
-      lista.length === 0
-    ) {
+/* ---------------- secciones ---------------- */
 
-      horarios.innerHTML =
-        '<p style="color:#aaa;grid-column:1/-1;">No quedan horarios disponibles para este día.</p>';
+function sectionHead(title, subtitle, action) {
+  return h('div', { class: 'head' },
+    h('div', {}, h('h2', {}, title), subtitle ? h('div', { class: 'sub' }, subtitle) : null),
+    action || null);
+}
 
-      return;
-    }
+function renderServices() {
+  const sec = clear($('servicios'));
+  const list = site.services;
+  let all = false;
+  const grid = h('div', { class: 'grid g4' });
+  const btn = h('button', { class: 'pill', onclick: () => { all = !all; paint(); } });
+  function paint() {
+    clear(grid);
+    if (!list.length) { grid.append(h('div', { class: 'empty' }, 'Pronto publicaremos nuestros servicios.')); btn.style.display = 'none'; return; }
+    (all ? list : list.slice(0, 4)).forEach(s => grid.append(
+      h('div', { class: 'card' },
+        h('div', { class: 'ph' }, s.image ? h('img', { src: s.image, alt: s.name, loading: 'lazy' }) : '✂'),
+        h('div', { class: 'body' }, h('strong', {}, s.name), h('small', {}, money(s.price)), h('small', {}, dur(s.duration))))));
+    btn.style.display = list.length > 4 ? '' : 'none';
+    btn.textContent = all ? 'Ver menos' : 'Ver todos →';
+  }
+  sec.append(sectionHead('Nuestros servicios', 'Calidad, estilo y precisión en cada detalle.', btn), grid);
+  paint();
+}
 
-    lista.forEach(item => {
+function renderGallery() {
+  const sec = clear($('galeria'));
+  const list = site.media.gallery;
+  const grid = h('div', { class: 'grid g6' });
+  if (!list.length) grid.append(h('div', { class: 'empty' }, 'Pronto compartiremos nuestros trabajos.'));
+  list.slice(0, 6).forEach((src, i) => grid.append(
+    h('button', { class: 'thumb', onclick: () => openLightbox(i), 'aria-label': 'Ver foto ' + (i + 1) },
+      h('img', { src, alt: 'Foto ' + (i + 1), loading: 'lazy' }))));
+  sec.append(sectionHead('Galería de fotos', null,
+    list.length > 6 ? h('button', { class: 'pill', onclick: openGalleryAll }, 'Ver galería') : null), grid);
+}
 
-      const hora =
-        typeof item === "string"
-          ? item
-          : item.hora;
+function openGalleryAll() {
+  const all = clear($('galAll'));
+  site.media.gallery.forEach((src, i) => all.append(
+    h('button', { class: 'thumb', onclick: () => openLightbox(i) }, h('img', { src, alt: 'Foto ' + (i + 1), loading: 'lazy' }))));
+  $('galOv').classList.add('show');
+}
+function openLightbox(i) { galleryIndex = i; showLb(); $('lb').classList.add('show'); }
+function showLb() {
+  const n = site.media.gallery.length;
+  galleryIndex = (galleryIndex + n) % n;
+  $('lbImg').src = site.media.gallery[galleryIndex];
+}
 
-      const disponible =
-        typeof item === "string"
-          ? true
-          : item.disponible !== false;
+function videoNode(v) {
+  let u;
+  try { u = new URL(v.url); } catch (e) { return null; }
+  const host = u.hostname.replace(/^www\./, '');
+  let embed = null;
+  if (host === 'youtube.com' || host === 'm.youtube.com') {
+    const id = u.searchParams.get('v') || (u.pathname.match(/^\/(?:shorts|embed)\/([\w-]{6,20})/) || [])[1];
+    if (id && /^[\w-]{6,20}$/.test(id)) embed = 'https://www.youtube.com/embed/' + id;
+  } else if (host === 'youtu.be') {
+    const id = u.pathname.slice(1);
+    if (/^[\w-]{6,20}$/.test(id)) embed = 'https://www.youtube.com/embed/' + id;
+  } else if (host === 'vimeo.com') {
+    const id = u.pathname.match(/^\/(\d{4,12})/);
+    if (id) embed = 'https://player.vimeo.com/video/' + id[1];
+  }
+  if (embed) return h('iframe', { src: embed, title: v.title || 'Video', loading: 'lazy', allowfullscreen: 'true',
+    allow: 'accelerometer; encrypted-media; gyroscope; picture-in-picture', referrerpolicy: 'strict-origin-when-cross-origin' });
+  if (/\.(mp4|webm|ogg)$/i.test(u.pathname)) return h('video', { src: v.url, controls: 'true', preload: 'metadata', playsinline: 'true' });
+  return h('a', { href: v.url, target: '_blank', rel: 'noopener noreferrer', class: 'pill' }, 'Ver video');
+}
 
-      const boton =
-        document.createElement("button");
-
-      boton.type = "button";
-      boton.className = "hora";
-      boton.textContent = hora;
-      boton.disabled = !disponible;
-
-      boton.addEventListener(
-        "click",
-        () => {
-
-          document
-            .querySelectorAll(".hora")
-            .forEach(b => {
-              b.classList.remove("active");
-            });
-
-          boton.classList.add("active");
-
-          horaSeleccionada = hora;
-        }
-      );
-
-      horarios.appendChild(boton);
+function renderVideos() {
+  const sec = clear($('videos'));
+  const list = site.videos;
+  let all = false;
+  const grid = h('div', { class: 'grid g4' });
+  const btn = h('button', { class: 'pill', onclick: () => { all = !all; paint(); } });
+  function paint() {
+    clear(grid);
+    if (!list.length) { grid.append(h('div', { class: 'empty' }, 'Pronto compartiremos nuestros videos.')); btn.style.display = 'none'; return; }
+    (all ? list : list.slice(0, 4)).forEach(v => {
+      const node = videoNode(v);
+      grid.append(h('div', { class: 'card' }, h('div', { class: 'video' }, node), v.title ? h('div', { class: 'vt' }, v.title) : null));
     });
+    btn.style.display = list.length > 4 ? '' : 'none';
+    btn.textContent = all ? 'Ver menos' : 'Ver todos →';
   }
+  sec.append(sectionHead('Videos', null, btn), grid);
+  paint();
+}
 
-  botonReservar.addEventListener(
-    "click",
-    async () => {
+function hoursText(d) {
+  if (!d || !d.open) return 'Cerrado';
+  return d.from + ' – ' + d.to + (d.breakFrom && d.breakTo ? ' (Descanso ' + d.breakFrom + ' – ' + d.breakTo + ')' : '');
+}
 
-      const servicio =
-        document
-          .getElementById("servicio")
-          .value;
+function renderInfo() {
+  const b = site.business;
+  const sec = clear($('informacion'));
+  const rows = h('div', { class: 'rows' });
+  const wa = (b.phone || '').replace(/\D/g, '');
+  if (b.address) rows.append(h('div', { class: 'row' }, h('b', {}, '⌖'), h('div', {}, 'Dirección', h('small', {}, b.address))));
+  if (b.phone) rows.append(h('div', { class: 'row' }, h('b', {}, '✆'), h('div', {}, 'Teléfono / WhatsApp',
+    h('small', {}, wa.length >= 8 ? h('a', { href: 'https://wa.me/' + wa, target: '_blank', rel: 'noopener noreferrer' }, b.phone) : b.phone))));
+  if (b.email) rows.append(h('div', { class: 'row' }, h('b', {}, '✉'), h('div', {}, 'Correo electrónico', h('small', {}, h('a', { href: 'mailto:' + b.email }, b.email)))));
+  const hours = h('div', {}, 'Horario de atención');
+  DAY_ORDER.forEach(d => hours.append(h('small', {}, DAYS[d] + ': ' + hoursText(site.hours[d]))));
+  rows.append(h('div', { class: 'row' }, h('b', {}, '◷'), hours));
 
-      const nombre =
-        document
-          .getElementById("nombre")
-          .value
-          .trim();
+  const right = h('div', {});
+  const q = b.mapQuery || b.address;
+  if (q) {
+    right.append(h('div', { class: 'map' }, h('iframe', { src: 'https://www.google.com/maps?q=' + encodeURIComponent(q) + '&output=embed',
+      title: 'Mapa', loading: 'lazy', referrerpolicy: 'no-referrer-when-downgrade' })));
+    right.append(h('a', { class: 'btn gold-outline', style: 'width:100%;margin-top:12px', target: '_blank', rel: 'noopener noreferrer',
+      href: b.mapUrl || ('https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(q)) }, '⌖ Cómo llegar'));
+  }
+  if (site.media.local) right.append(h('img', { class: 'local', style: 'margin-top:12px', src: site.media.local, alt: 'Local', loading: 'lazy' }));
 
-      const telefono =
-        document
-          .getElementById("telefono")
-          .value
-          .trim();
+  sec.append(sectionHead('Información del negocio', 'Visítanos, será un gusto atenderte.'),
+    h('div', { class: 'info' }, rows, right));
+}
 
-      if (
-        !servicio ||
-        !fecha.value ||
-        !horaSeleccionada ||
-        !nombre ||
-        !telefono
-      ) {
+function renderBarbers() {
+  const sec = clear($('barberos'));
+  const grid = h('div', { class: 'grid g4' });
+  const list = site.barbers;
+  if (!list.length) grid.append(h('div', { class: 'empty' }, 'Pronto presentaremos a nuestro equipo.'));
+  list.forEach(b => grid.append(h('div', { class: 'card barber' },
+    h('div', { class: 'ph' }, b.photo ? h('img', { src: b.photo, alt: b.name, loading: 'lazy' }) : '☺'),
+    h('div', { class: 'body' }, h('strong', {}, b.name),
+      b.description ? h('small', {}, b.description) : null,
+      h('div', { class: 'chips' }, b.serviceIds.map(id => {
+        const s = site.services.find(x => x.id === id);
+        return s ? h('span', { class: 'chip' }, s.name) : null;
+      }))))));
+  sec.append(sectionHead('Nuestro equipo', 'Profesionales a tu servicio.'), grid);
+}
 
-        alert(
-          "Completa todos los datos y selecciona un horario."
-        );
+function renderSocial() {
+  const b = site.business;
+  const box = clear($('social'));
+  [['instagram', 'IG'], ['tiktok', 'TT'], ['facebook', 'f']].forEach(([k, label]) => {
+    if (b[k]) box.append(h('a', { href: b[k], target: '_blank', rel: 'noopener noreferrer', 'aria-label': k }, label));
+  });
+}
 
-        return;
-      }
+/* ---------------- flujo de reserva ---------------- */
 
-      botonReservar.disabled = true;
+const S = { step: 1, barber: null, ids: new Set(), date: '', time: '', slots: [], showAll: false, loading: false, done: null };
 
-      botonReservar.textContent =
-        "RESERVANDO...";
+function openBooking() {
+  Object.assign(S, { step: 1, barber: null, ids: new Set(), date: '', time: '', slots: [], showAll: false, done: null });
+  $('bookOv').classList.add('show');
+  drawBooking();
+}
+function closeBooking() { $('bookOv').classList.remove('show'); }
 
-      try {
+function chosenServices() { return site.services.filter(s => S.ids.has(s.id)); }
+const totalDur = () => chosenServices().reduce((a, s) => a + s.duration, 0);
+const totalPrice = () => chosenServices().reduce((a, s) => a + s.price, 0);
 
-        const respuesta =
-          await fetch(
-           "/api/bookings",
-            {
-              method: "POST",
+function frame(titleText, stepNo, ...content) {
+  const sheet = clear($('sheet'));
+  sheet.append(
+    h('div', { class: 'top' }, h('h2', {}, titleText), h('button', { class: 'x', onclick: closeBooking, 'aria-label': 'Cerrar' }, '×')),
+    stepNo ? h('div', { class: 'steps' }, [1, 2, 3, 4].map(n => h('i', { class: n <= stepNo ? 'on' : '' }))) : null,
+    ...content);
+}
 
-              headers: {
-                "Content-Type":
-                  "application/json"
-              },
+function drawBooking() {
+  if (S.done) return drawDone();
+  if (S.step === 1) return drawBarbers();
+  if (S.step === 2) return drawServices();
+  if (S.step === 3) return drawDateTime();
+  return drawConfirm();
+}
 
-              body: JSON.stringify({
-                serviceId: servicio,
-                barberId: "master",
-                date: fecha.value,
-                time: horaSeleccionada,
-                name: nombre,
-                phone: telefono
-              })
-            }
-          );
+function drawBarbers() {
+  const list = site.barbers.filter(b => b.acceptsBookings && b.serviceIds.length);
+  const box = h('div', {});
+  if (site.page.welcome) box.append(h('p', { class: 'sub', style: 'margin-bottom:12px' }, site.page.welcome));
+  if (!list.length) box.append(h('div', { class: 'empty' }, 'Por ahora no hay barberos disponibles para reservar.'));
+  list.forEach(b => box.append(h('button', { class: 'opt' + (S.barber && S.barber.id === b.id ? ' sel' : ''),
+    onclick: () => { if (!S.barber || S.barber.id !== b.id) { S.barber = b; S.ids = new Set(); S.date = ''; S.time = ''; S.slots = []; } S.step = 2; drawBooking(); } },
+    h('div', { class: 'av' }, b.photo ? h('img', { src: b.photo, alt: b.name }) : '☺'),
+    h('div', { class: 'grow' }, h('strong', {}, b.name), b.description ? h('small', {}, b.description) : null))));
+  frame('1. Elige tu barbero', 1, box);
+}
 
-        const resultado =
-          await respuesta.json();
+function drawServices() {
+  const list = site.services.filter(s => S.barber.serviceIds.includes(s.id));
+  const box = h('div', {});
+  list.forEach(s => box.append(h('button', { class: 'opt' + (S.ids.has(s.id) ? ' sel' : ''), 'data-svc': s.id,
+    onclick: () => { S.ids.has(s.id) ? S.ids.delete(s.id) : S.ids.add(s.id); S.time = ''; S.slots = []; drawBooking(); } },
+    h('div', { class: 'av' }, s.image ? h('img', { src: s.image, alt: s.name }) : '✂'),
+    h('div', { class: 'grow' }, h('strong', {}, s.name), h('small', {}, dur(s.duration))),
+    h('strong', {}, money(s.price)))));
+  if (!list.length) box.append(h('div', { class: 'empty' }, 'Este barbero no tiene servicios disponibles.'));
+  frame('2. Elige tus servicios', 2,
+    h('p', { class: 'sub' }, 'Con ' + S.barber.name + '. Puedes elegir uno o varios.'), h('div', { style: 'height:10px' }), box,
+    h('div', { class: 'tot' }, h('span', {}, 'Duración total: ' + dur(totalDur())), h('span', {}, money(totalPrice()))),
+    h('div', { style: 'display:flex;gap:10px' },
+      h('button', { class: 'btn ghost', onclick: () => { S.step = 1; drawBooking(); } }, 'Atrás'),
+      h('button', { class: 'btn', style: 'flex:1', id: 'toStep3', disabled: S.ids.size ? false : 'true', onclick: () => { S.step = 3; drawBooking(); } }, 'Continuar')));
+}
 
-        if (!respuesta.ok) {
+async function loadSlots() {
+  S.loading = true; S.time = ''; S.slots = [];
+  drawSlotsArea();
+  try {
+    const q = new URLSearchParams({ barberId: S.barber.id, date: S.date, serviceIds: [...S.ids].join(',') });
+    const r = await fetch('/api/availability?' + q);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'No se pudo consultar');
+    S.slots = data.slots || [];
+    S.error = '';
+  } catch (e) { S.error = e.message; }
+  S.loading = false;
+  drawSlotsArea();
+}
 
-          throw new Error(
-            resultado.error ||
-            "No se pudo realizar la reserva."
-          );
-        }
+function drawDateTime() {
+  const input = h('input', { class: 'in', type: 'date', id: 'dateIn', min: localToday(), value: S.date,
+    onchange: e => { S.date = e.target.value; S.showAll = false; if (S.date) loadSlots(); else { S.slots = []; drawSlotsArea(); } } });
+  frame('3. Fecha y hora', 3,
+    h('p', { class: 'sub' }, S.barber.name + ' · ' + chosenServices().map(s => s.name).join(' + ') + ' · ' + dur(totalDur())),
+    h('label', { class: 'f', for: 'dateIn' }, 'Fecha'), input,
+    h('div', { id: 'slotsArea' }),
+    h('div', { style: 'display:flex;gap:10px;margin-top:16px' },
+      h('button', { class: 'btn ghost', onclick: () => { S.step = 2; drawBooking(); } }, 'Atrás'),
+      h('button', { class: 'btn', style: 'flex:1', id: 'toStep4', disabled: S.time ? false : 'true', onclick: () => { S.step = 4; drawBooking(); } }, 'Continuar')));
+  drawSlotsArea();
+}
 
-        alert(
-          "💈 ¡Reserva confirmada! Te esperamos en El Máster."
-        );
+function drawSlotsArea() {
+  const area = $('slotsArea');
+  if (!area) return;
+  clear(area);
+  if (!S.date) { area.append(h('p', { class: 'sub', style: 'margin-top:12px' }, 'Elige una fecha para ver los horarios.')); return; }
+  if (S.loading) { area.append(h('p', { class: 'sub', style: 'margin-top:12px' }, 'Consultando horarios…')); return; }
+  if (S.error) { area.append(h('p', { class: 'err' }, S.error)); return; }
+  if (!S.slots.length) { area.append(h('p', { class: 'sub', style: 'margin-top:12px' }, 'No hay horarios disponibles ese día. Prueba con otra fecha.')); return; }
+  const shown = S.showAll ? S.slots : S.slots.filter(t => toMin(t) % 15 === 0);
+  const list = shown.length ? shown : S.slots;
+  area.append(h('div', { class: 'slots' }, list.map(t => h('button', { class: 'slot' + (S.time === t ? ' sel' : ''), 'data-time': t,
+    onclick: () => { S.time = t; drawSlotsArea(); const b = $('toStep4'); if (b) b.disabled = false; } }, t))));
+  if (S.time) area.append(h('p', { class: 'sub', style: 'margin-top:10px' }, 'Terminaría a las ' + toHHMM(toMin(S.time) + totalDur())));
+  if (S.slots.length !== shown.length || S.showAll) area.append(h('button', { class: 'pill', style: 'margin-top:10px',
+    onclick: () => { S.showAll = !S.showAll; drawSlotsArea(); } }, S.showAll ? 'Ver menos horarios' : 'Ver todos los horarios'));
+}
 
-        horaSeleccionada = "";
+function drawConfirm() {
+  const end = toHHMM(toMin(S.time) + totalDur());
+  const sum = h('div', { class: 'sum' },
+    h('div', {}, h('span', {}, 'Barbero'), h('span', {}, S.barber.name)),
+    h('div', {}, h('span', {}, 'Servicios'), h('span', {}, chosenServices().map(s => s.name).join(' + '))),
+    h('div', {}, h('span', {}, 'Duración total'), h('span', {}, dur(totalDur()))),
+    h('div', {}, h('span', {}, 'Fecha'), h('span', {}, prettyDate(S.date))),
+    h('div', {}, h('span', {}, 'Hora inicial'), h('span', {}, S.time)),
+    h('div', {}, h('span', {}, 'Hora final'), h('span', {}, end)),
+    h('div', {}, h('span', {}, 'Total'), h('span', {}, money(totalPrice()))));
+  const err = h('div', { class: 'err', id: 'bookErr' });
+  const btn = h('button', { class: 'btn', style: 'flex:1', id: 'confirmBtn', onclick: confirmBooking }, 'CONFIRMAR RESERVA');
+  frame('4. Confirmación', 4, sum,
+    h('label', { class: 'f', for: 'bName' }, 'Tu nombre'),
+    h('input', { class: 'in', id: 'bName', autocomplete: 'name', maxlength: '80' }),
+    h('label', { class: 'f', for: 'bPhone' }, 'WhatsApp'),
+    h('input', { class: 'in', id: 'bPhone', type: 'tel', autocomplete: 'tel', maxlength: '20', placeholder: 'Ej. 0991234567' }),
+    err,
+    h('div', { style: 'display:flex;gap:10px;margin-top:14px' },
+      h('button', { class: 'btn ghost', onclick: () => { S.step = 3; drawBooking(); } }, 'Atrás'), btn));
+}
 
-        await cargarHorarios();
-
-      } catch (error) {
-
-        alert(
-          error.message ||
-          "Ocurrió un error. Intenta nuevamente."
-        );
-
-      } finally {
-
-        botonReservar.disabled = false;
-
-        botonReservar.textContent =
-          "CONFIRMAR RESERVA";
-      }
+async function confirmBooking() {
+  const name = $('bName').value.trim(), phone = $('bPhone').value.trim();
+  const err = $('bookErr'), btn = $('confirmBtn');
+  err.textContent = '';
+  if (name.length < 2 || !phone) { err.textContent = 'Escribe tu nombre y tu WhatsApp.'; return; }
+  btn.disabled = true; btn.textContent = 'RESERVANDO…';
+  try {
+    const r = await fetch('/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, phone, barberId: S.barber.id, serviceIds: [...S.ids], date: S.date, time: S.time }) });
+    const data = await r.json();
+    if (!r.ok) {
+      if (r.status === 409) { S.step = 3; await drawBooking(); S.error = ''; loadSlots(); const e2 = h('p', { class: 'err' }, data.error); $('slotsArea').before(e2); return; }
+      throw new Error(data.error || 'No se pudo realizar la reserva');
     }
-  );
-</script>
+    S.done = data.booking; drawBooking();
+  } catch (e) {
+    err.textContent = e.message; btn.disabled = false; btn.textContent = 'CONFIRMAR RESERVA';
+  }
+}
 
+function drawDone() {
+  const bk = S.done;
+  frame('¡Reserva confirmada!', 0,
+    h('div', { class: 'sum' },
+      h('div', {}, h('span', {}, 'Barbero'), h('span', {}, S.barber.name)),
+      h('div', {}, h('span', {}, 'Fecha'), h('span', {}, prettyDate(bk.date))),
+      h('div', {}, h('span', {}, 'Horario'), h('span', {}, bk.time + ' – ' + bk.endTime))),
+    h('p', { class: 'sub', style: 'margin:12px 0' }, 'Te esperamos en ' + (site.business.name || 'nuestro local') + '.'),
+    h('button', { class: 'btn', style: 'width:100%', onclick: closeBooking }, 'Listo'));
+}
+
+/* ---------------- eventos ---------------- */
+
+document.querySelectorAll('[data-go]').forEach(btn => btn.addEventListener('click', () => {
+  const target = $(btn.dataset.go);
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}));
+$('galClose').addEventListener('click', () => $('galOv').classList.remove('show'));
+$('lbClose').addEventListener('click', () => $('lb').classList.remove('show'));
+$('lbPrev').addEventListener('click', () => { galleryIndex--; showLb(); });
+$('lbNext').addEventListener('click', () => { galleryIndex++; showLb(); });
+$('bookOv').addEventListener('click', e => { if (e.target === $('bookOv')) closeBooking(); });
+$('galOv').addEventListener('click', e => { if (e.target === $('galOv')) $('galOv').classList.remove('show'); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeBooking(); $('galOv').classList.remove('show'); $('lb').classList.remove('show'); }
+});
+
+load();
+})();
+</script>
 </body>
 </html>
