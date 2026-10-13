@@ -21,7 +21,10 @@ const PNG_AZUL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
 
 function crearPool(url) {
   const sinSsl = new URL(url).searchParams.get('sslmode') === 'disable';
-  return new Pool({ connectionString: url, ssl: sinSsl ? false : { rejectUnauthorized: false } });
+  const pool = new Pool({ connectionString: url, ssl: sinSsl ? false : { rejectUnauthorized: false } });
+  /* Al borrar la base temporal, PostgreSQL cierra las conexiones inactivas: no es un error de la prueba. */
+  pool.on('error', () => {});
+  return pool;
 }
 
 test.describe('Fase 2 · aislamiento entre barberías', { skip: omitir }, () => {
