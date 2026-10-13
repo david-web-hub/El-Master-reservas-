@@ -82,7 +82,7 @@ test('crear reserva web, bloquear el horario y rechazar solapamientos', async ()
   const solapa = await s.pedir('POST', '/api/bookings', { ...datos, name: 'Otro Cliente', time: '09:20' });
   assert.equal(solapa.status, 409);
 
-  assert.equal(s.leerDb().bookings.filter(x => x.date === LUNES && x.time === '09:00').length, 1, 'sin duplicados');
+  assert.equal((await s.datos()).bookings.filter(x => x.date === LUNES && x.time === '09:00').length, 1, 'sin duplicados');
 });
 
 test('crear reserva valida datos', async () => {
@@ -110,7 +110,7 @@ test('cambiar estado de una reserva y cancelarla libera el horario', async () =>
   const c = await s.pedir('PATCH', `/api/bookings/${id}`, { status: 'cancelled' });
   assert.equal(c.json.booking.status, 'cancelled');
   assert.ok(c.json.booking.updatedAt);
-  const guardada = s.leerDb().bookings.find(x => x.id === id);
+  const guardada = (await s.datos()).bookings.find(x => x.id === id);
   assert.equal(guardada.status, 'cancelled', 'el cambio queda escrito');
 
   const disp = await s.pedir('GET', `/api/availability?date=${LUNES}&barberId=master&serviceIds=corte`);

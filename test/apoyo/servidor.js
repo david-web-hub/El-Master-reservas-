@@ -16,6 +16,7 @@ const path = require('node:path');
 const net = require('node:net');
 
 /* Código de la aplicación a probar. MASTER_RESERVAS_RAIZ permite probar otra versión (p. ej. la rama principal). */
+const crypto = require('node:crypto');
 const RAIZ = path.resolve(process.env.MASTER_RESERVAS_RAIZ || path.join(__dirname, '..', '..'));
 const MODULOS = path.resolve(__dirname, '..', '..', 'node_modules');
 const VERIFY_TOKEN = 'token-de-prueba';
@@ -55,18 +56,37 @@ function puertoLibre() {
 function prepararCarpeta(db) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'master-reservas-prueba-'));
   fs.copyFileSync(path.join(RAIZ, 'server.js'), path.join(dir, 'server.js'));
+  /* Módulos propios de la aplicación (pueden no existir en versiones anteriores). */
+  for (const extra of ['almacen.js']) {
+    if (fs.existsSync(path.join(RAIZ, extra))) fs.copyFileSync(path.join(RAIZ, extra), path.join(dir, extra));
+  }
   fs.cpSync(path.join(RAIZ, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
   const destino = path.join(dir, 'data', 'db.json');
   if (db === undefined) fs.copyFileSync(path.join(RAIZ, 'data', 'db.json'), destino);
+  else if (typeof db === 'string') fs.writeFileSync(destino, db);
   else if (db !== null) fs.writeFileSync(destino, JSON.stringify(db, null, 2));
   return dir;
 }
 
+/*
+  Las pruebas generales usan data/db.json salvo que TEST_ALMACEN=postgres:
+  así la misma batería comprueba los dos modos de almacenamiento.
+*/
+function postgresPorDefecto() {
+  return process.env.TEST_ALMACEN === 'postgres' && Boolean(urlBasePruebas());
+}
+
+/* Cada servidor de prueba usa su propia barbería: las pruebas no se mezclan aunque compartan base. */
+function negocioNuevo() {
+  return 'prueba-' + crypto.randomBytes(5).toString('hex');
+}
+
 class Servidor {
-  constructor(dir, { postgres }) {
+  constructor(dir, { postgres, negocio }) {
     this.dir = dir;
     this.postgres = postgres;
+    this.negocio = negocio || negocioNuevo();
     this.logs = [];
     this.stdout = '';
     this.proc = null;
@@ -76,7 +96,20 @@ class Servidor {
   get archivoDb() { return path.join(this.dir, 'data', 'db.json'); }
   leerDb() { return JSON.parse(fs.readFileSync(this.archivoDb, 'utf8')); }
 
+  /* Datos de la agenda tal como los guarda el servidor (archivo o PostgreSQL), vía respaldo administrativo. */
+  async datos() {
+    const r = await this.pedir('GET', '/api/admin/backup');
+    if (r.status !== 200) throw new Error('No se pudo leer el respaldo: ' + r.status);
+    return r.json;
+  }
+
   async iniciar() {
+    await this.arrancar();
+    await this.esperarLog(/EL MÁSTER RESERVAS INICIADO/, 20000);
+    return this;
+  }
+
+  async arrancar() {
     const port = await puertoLibre();
     const env = {
       PATH: process.env.PATH,
@@ -91,6 +124,7 @@ class Servidor {
     const pg = this.postgres ? urlBasePruebas() : null;
     if (pg) {
       env.DATABASE_URL = pg;
+      env.DEFAULT_BUSINESS_ID = this.negocio;
     } else {
       /* Sin base: apunta a un puerto cerrado para que pg falle de inmediato. */
       env.PGHOST = '127.0.0.1';
@@ -104,8 +138,6 @@ class Servidor {
     this.proc.stdout.on('data', chunk => { this.stdout += String(chunk); recoger(chunk); });
     this.proc.stderr.on('data', recoger);
     this.base = `http://127.0.0.1:${port}`;
-    await this.esperarLog(/EL MÁSTER RESERVAS INICIADO/, 15000);
-    if (pg) await this.esperarLog(/TABLAS ADMINISTRATIVAS Y DE CAJA LISTAS|ERROR INICIALIZANDO POSTGRESQL/, 15000);
     return this;
   }
 
@@ -114,7 +146,9 @@ class Servidor {
     while (Date.now() < fin) {
       const linea = this.logs.slice(desde).find(l => regex.test(l));
       if (linea) return linea;
-      if (this.proc.exitCode !== null) throw new Error('El servidor terminó:\n' + this.logs.join('\n'));
+      if (this.proc.exitCode !== null && !regex.test(this.logs.join('\n'))) {
+        throw new Error('El servidor terminó:\n' + this.logs.join('\n'));
+      }
       await new Promise(r => setTimeout(r, 25));
     }
     throw new Error(`No apareció ${regex} en los registros:\n` + this.logs.slice(-40).join('\n'));
@@ -171,14 +205,19 @@ class Servidor {
 }
 
 /* Servidor nuevo en una carpeta nueva (equivale a un despliegue limpio). */
-async function iniciarServidor({ db, postgres = false } = {}) {
-  return new Servidor(prepararCarpeta(db), { postgres }).iniciar();
+async function iniciarServidor({ db, postgres = postgresPorDefecto(), negocio } = {}) {
+  return new Servidor(prepararCarpeta(db), { postgres, negocio }).iniciar();
+}
+
+/* Arranca sin esperar a que el servidor quede listo (para probar arranques que deben fallar). */
+async function lanzarServidor({ db, postgres = postgresPorDefecto(), negocio } = {}) {
+  return new Servidor(prepararCarpeta(db), { postgres, negocio }).arrancar();
 }
 
 /* Reinicia el proceso conservando la misma carpeta (equivale a reiniciar en un disco persistente). */
 async function reiniciar(servidor) {
   await servidor.detener();
-  const nuevo = new Servidor(servidor.dir, { postgres: servidor.postgres });
+  const nuevo = new Servidor(servidor.dir, { postgres: servidor.postgres, negocio: servidor.negocio });
   return nuevo.iniciar();
 }
 
@@ -191,4 +230,4 @@ function proximoDia(diaSemana) {
   return d.toISOString().slice(0, 10);
 }
 
-module.exports = { iniciarServidor, reiniciar, urlBasePruebas, proximoDia, RAIZ, VERIFY_TOKEN };
+module.exports = { iniciarServidor, lanzarServidor, reiniciar, urlBasePruebas, postgresPorDefecto, negocioNuevo, proximoDia, RAIZ, VERIFY_TOKEN };

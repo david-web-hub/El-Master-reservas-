@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   regresion:
-    name: Regresión (Node 22 + PostgreSQL con SSL)
+    name: Regresión (Node 22 + PostgreSQL con SSL, ambos modos)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -48,7 +48,12 @@ jobs:
       - name: Comprobar sintaxis
         run: npm run check
 
-      - name: Pruebas de regresión
+      - name: Pruebas de regresión (agenda en archivo + pruebas de PostgreSQL)
+        run: npm test
+
+      - name: Pruebas de regresión (agenda en PostgreSQL)
+        env:
+          TEST_ALMACEN: postgres
         run: npm test
 
   diseno:

@@ -37,11 +37,14 @@ test.describe('PostgreSQL', { skip: omitir }, () => {
     assert.equal(r.status, 200);
     const l = await s.pedir('GET', '/api/admin/settings');
     assert.equal(l.json.settings.negocio.phone, '0990000300');
-    assert.equal(s.leerDb().business.phone, '0990000300');
+    assert.equal((await s.datos()).business.phone, '0990000300');
     assert.equal((await s.pedir('PUT', '/api/admin/business', { name: '' })).status, 400);
   });
 
-  test('mensajes personalizados de Elia se aplican y se pueden desactivar', async () => {
+  test('mensajes personalizados de Elia se aplican y se pueden desactivar', async (t) => {
+    /* La configuración de Elia todavía es común a toda la base: se restaura al terminar. */
+    const previos = (await s.pedir('GET', '/api/admin/settings')).json.settings.mensajes || {};
+    t.after(() => s.pedir('POST', '/api/admin/settings', { section: 'mensajes', data: previos }));
     const mensajes = { enabled: true, welcome: 'Bienvenida de prueba', closing: 'Cierre de prueba', cancel: 'Cancelación de prueba' };
     assert.equal((await s.pedir('POST', '/api/admin/settings', { section: 'mensajes', data: mensajes })).status, 200);
     assert.equal(await s.enviarWhatsApp('hola', '593990000301'), 'Bienvenida de prueba');
@@ -50,7 +53,6 @@ test.describe('PostgreSQL', { skip: omitir }, () => {
     await s.pedir('POST', '/api/admin/settings', { section: 'mensajes', data: { ...mensajes, enabled: false } });
     assert.equal(await s.enviarWhatsApp('hola', '593990000302'), null, 'Elia desactivada no responde');
 
-    await s.pedir('POST', '/api/admin/settings', { section: 'mensajes', data: { ...mensajes, enabled: true } });
   });
 
   test('productos: crear, editar y listar', async () => {
@@ -74,7 +76,7 @@ test.describe('PostgreSQL', { skip: omitir }, () => {
     assert.equal(venta.status, 200, venta.texto);
     assert.equal(Number(venta.json.sale.total), 5, 'el servidor usa el precio del catálogo');
 
-    const b = s.leerDb().bookings.find(x => x.id === bookingId);
+    const b = (await s.datos()).bookings.find(x => x.id === bookingId);
     assert.equal(b.status, 'completed');
     assert.equal(b.paymentStatus, 'paid');
 
@@ -106,7 +108,7 @@ test.describe('PostgreSQL', { skip: omitir }, () => {
     assert.match(pub.json.barbers.find(b => b.id === 'master').photo, /barber_master/);
     const del = await s.pedir('DELETE', '/api/admin/media/barber_master');
     assert.equal(del.json.deleted, 1);
-    assert.ok(s.leerDb().barbers.some(b => b.id === 'master'));
+    assert.ok((await s.datos()).barbers.some(b => b.id === 'master'));
   });
 
   test('respaldo administrativo incluye agenda y configuración', async () => {

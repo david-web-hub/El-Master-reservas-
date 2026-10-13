@@ -22,6 +22,32 @@ const DB_FILE =
 
 
 /* =========================================================
+   ALMACÉN DE LA AGENDA
+   Con DATABASE_URL, reservas, barberos, servicios y horarios
+   se guardan en PostgreSQL (persisten entre reinicios y
+   despliegues). Sin DATABASE_URL se usa data/db.json, solo
+   para desarrollo local.
+========================================================= */
+
+const {
+  crearAlmacen,
+  ErrorConflictoHorario,
+  validarNegocio
+} = require('./almacen');
+
+const DEFAULT_BUSINESS_ID =
+  validarNegocio(
+    process.env.DEFAULT_BUSINESS_ID ||
+    'el-master'
+  );
+
+const MODO_ALMACEN =
+  process.env.DATABASE_URL
+    ? 'postgres'
+    : 'archivo';
+
+
+/* =========================================================
    POSTGRESQL
 ========================================================= */
 
@@ -280,50 +306,13 @@ function defaultDb() {
 
 
 /* =========================================================
-   LEER BASE JSON
+   NORMALIZAR DATOS DE LA AGENDA
+   Completa valores que faltan (compatibilidad con datos
+   creados por versiones anteriores).
 ========================================================= */
 
-function readDb() {
+function normalizarDb(db) {
 
-  try {
-
-    if (
-      !fs.existsSync(DB_FILE)
-    ) {
-
-      const initial =
-        defaultDb();
-
-      fs.mkdirSync(
-        path.dirname(DB_FILE),
-        {
-          recursive: true
-        }
-      );
-
-      fs.writeFileSync(
-        DB_FILE,
-        JSON.stringify(
-          initial,
-          null,
-          2
-        )
-      );
-
-      return initial;
-
-    }
-
-
-    const raw =
-      fs.readFileSync(
-        DB_FILE,
-        'utf8'
-      );
-
-
-    const db =
-      JSON.parse(raw);
 
 
     const defaults =
@@ -397,42 +386,56 @@ function readDb() {
 
     return db;
 
-  } catch (error) {
-
-    console.error(
-      'ERROR LEYENDO DB.JSON:',
-      error
-    );
-
-    return defaultDb();
-
-  }
-
 }
 
 
 /* =========================================================
-   GUARDAR BASE JSON
+   LEER Y GUARDAR LA AGENDA
+   readDb() devuelve una copia que se puede modificar.
+   writeDb() devuelve una promesa: hay que esperarla antes de
+   confirmar al cliente. Si falla, no se guarda nada y la
+   información anterior se conserva.
 ========================================================= */
+
+const almacen =
+  crearAlmacen({
+    modo: MODO_ALMACEN,
+    pool,
+    archivo: DB_FILE,
+    negocio: DEFAULT_BUSINESS_ID,
+    datosIniciales: defaultDb,
+    normalizar: normalizarDb,
+    intervalos: (db, booking) =>
+      bookingIntervals(db, booking)
+  });
+
+
+function readDb() {
+
+  return almacen.leer();
+
+}
+
 
 function writeDb(db) {
 
-  fs.mkdirSync(
-    path.dirname(DB_FILE),
-    {
-      recursive: true
-    }
-  );
+  return almacen.guardar(db);
+
+}
 
 
-  fs.writeFileSync(
-    DB_FILE,
-    JSON.stringify(
-      db,
-      null,
-      2
-    )
-  );
+/* Identificadores de reserva únicos aunque lleguen dos en el mismo milisegundo. */
+let ultimoIdReserva = 0;
+
+function nuevoIdReserva() {
+
+  ultimoIdReserva =
+    Math.max(
+      Date.now(),
+      ultimoIdReserva + 1
+    );
+
+  return `BK-${ultimoIdReserva}`;
 
 }
 
@@ -619,15 +622,16 @@ await pool.query(`
 }
 
 
-initPostgres()
-  .catch(error => {
+const postgresAdministrativoListo =
+  initPostgres()
+    .catch(error => {
 
-    console.error(
-      'ERROR INICIALIZANDO POSTGRESQL:',
-      error
-    );
+      console.error(
+        'ERROR INICIALIZANDO POSTGRESQL:',
+        error
+      );
 
-  });
+    });
 
 
 /* =========================================================
@@ -728,7 +732,7 @@ app.get(
 
 app.patch(
   '/api/bookings/:id',
-  (req, res) => {
+  async (req, res) => {
 
     try {
 
@@ -799,7 +803,7 @@ app.patch(
           .toISOString();
 
 
-      writeDb(db);
+      await writeDb(db);
 
 
       res.json({
@@ -808,6 +812,20 @@ app.patch(
       });
 
     } catch (error) {
+
+      if (
+        error instanceof
+        ErrorConflictoHorario
+      ) {
+
+        return res.status(409).json({
+          ok: false,
+          error:
+            'Ese horario ya está ocupado por otra reserva'
+        });
+
+      }
+
 
       console.error(
         'ERROR ACTUALIZANDO RESERVA:',
@@ -855,7 +873,7 @@ app.get(
 
 app.post(
   '/api/admin/services',
-  (req, res) => {
+  async (req, res) => {
 
     try {
 
@@ -968,7 +986,7 @@ app.post(
       );
 
 
-      writeDb(db);
+      await writeDb(db);
 
 
       res.json({
@@ -1002,7 +1020,7 @@ app.post(
 
 app.patch(
   '/api/admin/services/:id',
-  (req, res) => {
+  async (req, res) => {
 
     try {
 
@@ -1177,7 +1195,7 @@ app.patch(
           .toISOString();
 
 
-      writeDb(db);
+      await writeDb(db);
 
 
       res.json({
@@ -2390,7 +2408,7 @@ app.post(
                 .toISOString();
 
 
-            writeDb(db);
+            await writeDb(db);
 
           }
 
@@ -7238,7 +7256,7 @@ function crearBookingDesdeSesion(
   return {
 
     id:
-      `BK-${Date.now()}`,
+      nuevoIdReserva(),
 
     name:
       session.data.name,
@@ -7641,7 +7659,7 @@ app.get('/api/admin/hours', (req, res) => {
   res.json({ ok: true, hours: weeklyHours(readDb()), custom: Boolean(readDb().hours) });
 });
 
-app.put('/api/admin/hours', (req, res) => {
+app.put('/api/admin/hours', async (req, res) => {
   try {
     const input = req.body?.hours;
     if (!input || typeof input !== 'object') {
@@ -7689,7 +7707,7 @@ app.put('/api/admin/hours', (req, res) => {
     const db = readDb();
     db.hoursConfig = config;
     db.hours = periods;
-    writeDb(db);
+    await writeDb(db);
     res.json({ ok: true, hours: config });
   } catch (error) {
     console.error('ERROR GUARDANDO HORARIOS:', error);
@@ -7726,7 +7744,7 @@ app.put('/api/admin/business', async (req, res) => {
     const db = readDb();
     db.business = { ...db.business, name: data.name, phone: data.phone,
       email: data.email, address: data.address, description: data.description };
-    writeDb(db);
+    await writeDb(db);
 
     res.json({ ok: true, business: data });
   } catch (error) {
@@ -7757,14 +7775,14 @@ function applyBarberFields(db, barber, body, isNew) {
   return null;
 }
 
-app.post('/api/admin/barbers', (req, res) => {
+app.post('/api/admin/barbers', async (req, res) => {
   try {
     const db = readDb();
     const barber = { id: createId('barber'), active: true, acceptsBookings: true, serviceIds: [] };
     const error = applyBarberFields(db, barber, req.body || {}, true);
     if (error) return res.status(400).json({ ok: false, error });
     db.barbers.push(barber);
-    writeDb(db);
+    await writeDb(db);
     res.status(201).json({ ok: true, barber });
   } catch (error) {
     console.error('ERROR CREANDO BARBERO:', error);
@@ -7772,7 +7790,7 @@ app.post('/api/admin/barbers', (req, res) => {
   }
 });
 
-app.patch('/api/admin/barbers/:id', (req, res) => {
+app.patch('/api/admin/barbers/:id', async (req, res) => {
   try {
     const db = readDb();
     const barber = db.barbers.find(b => String(b.id) === String(req.params.id));
@@ -7786,7 +7804,7 @@ app.patch('/api/admin/barbers/:id', (req, res) => {
       b.barberId === barber.id && b.status !== 'cancelled' &&
       b.status !== 'completed' && String(b.date) >= today).length;
 
-    writeDb(db);
+    await writeDb(db);
     res.json({ ok: true, barber, upcomingBookings: upcoming });
   } catch (error) {
     console.error('ERROR EDITANDO BARBERO:', error);
@@ -7887,7 +7905,7 @@ app.get('/api/admin/backup', async (req, res) => {
     const db = readDb();
     let settings = {};
     try { settings = await readSettingsMap(); } catch (error) { console.error('ERROR LEYENDO SETTINGS PARA RESPALDO:', error); }
-    const backup = { version: 1, generatedAt: new Date().toISOString(), business: db.business || {}, barbers: db.barbers || [], services: db.services || [], schedule: db.schedule || {}, hoursConfig: db.hoursConfig || {}, bookings: db.bookings || [], settings };
+    const backup = { version: 1, generatedAt: new Date().toISOString(), business: db.business || {}, barbers: db.barbers || [], services: db.services || [], schedule: db.schedule || {}, hoursConfig: db.hoursConfig || {}, hours: db.hours || {}, agendaSettings: db.settings || {}, bookings: db.bookings || [], settings };
     const stamp = localDateParts(0);
     res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="el-master-respaldo-${stamp}.json"`, 'Cache-Control': 'no-store' });
     res.send(JSON.stringify(backup, null, 2));
@@ -8030,7 +8048,7 @@ app.get('/api/availability', (req, res) => {
 
 /* ---------------- CREAR RESERVA WEB (uno o varios servicios) ---------------- */
 
-app.post('/api/bookings', (req, res) => {
+app.post('/api/bookings', async (req, res) => {
   try {
     const { name, phone, barberId, date, time } = req.body || {};
     const ids = parseServiceIds(req.body?.serviceIds ?? req.body?.serviceId);
@@ -8077,7 +8095,7 @@ app.post('/api/bookings', (req, res) => {
     });
 
     const booking = {
-      id: `BK-${Date.now()}`,
+      id: nuevoIdReserva(),
       name: cleanName,
       phone: cleanPhone,
       serviceId: ids[0],
@@ -8097,9 +8115,12 @@ app.post('/api/bookings', (req, res) => {
     };
 
     db.bookings.push(booking);
-    writeDb(db);
+    await writeDb(db);
     res.status(201).json({ ok: true, booking });
   } catch (error) {
+    if (error instanceof ErrorConflictoHorario) {
+      return res.status(409).json({ ok: false, error: 'Ese horario acaba de ocuparse. Elige otro.' });
+    }
     console.error('ERROR CREANDO RESERVA WEB:', error);
     res.status(500).json({ ok: false, error: 'No se pudo crear la reserva' });
   }
@@ -9275,9 +9296,68 @@ app.post(
         );
 
 
-        writeDB(
-          fresh
-        );
+        /*
+          La reserva solo se confirma al cliente cuando quedó
+          guardada. Si otro cliente tomó el horario en ese
+          instante, se piden otras opciones como antes.
+        */
+        try {
+
+          await writeDB(
+            fresh
+          );
+
+        } catch (saveError) {
+
+          if (
+            saveError instanceof
+            ErrorConflictoHorario
+          ) {
+
+            limpiarHorarios(
+              session
+            );
+
+            session.data
+              .requestedTime =
+              null;
+
+            session.step =
+              'time';
+
+            saveSession(
+              from,
+              session
+            );
+
+            return sendWhatsApp(
+
+              from,
+
+              '⚠️ Uno de esos horarios acaba de ocuparse antes de confirmar.\n\n' +
+
+              'Dime otra hora y buscaré nuevamente opciones para todos los turnos.'
+
+            );
+
+          }
+
+          console.error(
+            'ERROR GUARDANDO RESERVA DE ELIA:',
+            saveError
+          );
+
+          return sendWhatsApp(
+
+            from,
+
+            '⚠️ No pude guardar tu reserva por un problema técnico.\n\n' +
+
+            'Escribe *CONFIRMAR* en unos minutos para intentarlo de nuevo.'
+
+          );
+
+        }
 
 
         resetSession(
@@ -10246,6 +10326,15 @@ app.get(
         database:
           'connected',
 
+        storage:
+          almacen.info().modo,
+
+        businessId:
+          almacen.info().negocio,
+
+        overlapConstraint:
+          almacen.info().restriccionSolapes,
+
         timestamp:
           new Date()
             .toISOString()
@@ -10341,20 +10430,155 @@ app.use(
 
 
 /* =========================================================
-   INICIAR SERVIDOR
+   PREPARAR TABLAS ADMINISTRATIVAS PARA VARIAS BARBERÍAS
+   Solo agrega la columna business_id con el valor de la
+   barbería actual. No modifica ni borra filas existentes.
 ========================================================= */
 
-app.listen(
-  PORT,
-  () => {
+async function prepararTablasMultiempresa() {
 
-    console.log(
-      `Barbería: http://localhost:${PORT}`
+  await ensureMediaTable();
+
+  for (const tabla of [
+    'sales',
+    'cash_sessions',
+    'products',
+    'admin_settings',
+    'media_assets'
+  ]) {
+
+    await pool.query(
+      `ALTER TABLE IF EXISTS ${tabla}
+         ADD COLUMN IF NOT EXISTS business_id TEXT NOT NULL
+         DEFAULT '${DEFAULT_BUSINESS_ID}'`
     );
 
-    console.log(
-      'EL MÁSTER RESERVAS INICIADO'
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS ${tabla}_business_idx
+         ON ${tabla} (business_id)`
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   INICIAR SERVIDOR
+   Con PostgreSQL, el servidor solo empieza a atender cuando
+   la agenda está cargada desde la base. Si la base no
+   responde, reintenta: nunca atiende con datos vacíos.
+========================================================= */
+
+async function prepararAlmacen() {
+
+  if (MODO_ALMACEN === 'archivo') {
+
+    console.warn(
+      'AVISO: sin DATABASE_URL la agenda se guarda en data/db.json. ' +
+      'Usa PostgreSQL en producción para no perder información.'
+    );
+
+    return almacen.iniciar();
+
+  }
+
+
+  await postgresAdministrativoListo;
+
+
+  for (let intento = 1; ; intento++) {
+
+    try {
+
+      await prepararTablasMultiempresa();
+
+      const estado =
+        await almacen.iniciar();
+
+      console.log(
+        `AGENDA EN POSTGRESQL LISTA (barbería: ${DEFAULT_BUSINESS_ID}, ` +
+        `restricción de solapes: ${estado.restriccionSolapes})`
+      );
+
+      return estado;
+
+    } catch (error) {
+
+      if (
+        error.code === 'IMPORTACION' ||
+        error.code === 'NEGOCIO_INVALIDO'
+      ) {
+        throw error;
+      }
+
+      const espera =
+        Math.min(
+          30000,
+          1000 * 2 ** Math.min(intento, 5)
+        );
+
+      console.error(
+        `ERROR PREPARANDO LA AGENDA EN POSTGRESQL (intento ${intento}); ` +
+        `reintento en ${espera / 1000} s:`,
+        error.message
+      );
+
+      await new Promise(
+        resolve =>
+          setTimeout(
+            resolve,
+            espera
+          )
+      );
+
+    }
+
+  }
+
+}
+
+
+/* Un error no controlado se registra en lugar de detener el servidor. */
+process.on(
+  'unhandledRejection',
+  error => {
+
+    console.error(
+      'ERROR NO CONTROLADO:',
+      error
     );
 
   }
 );
+
+
+prepararAlmacen()
+  .then(() => {
+
+    app.listen(
+      PORT,
+      () => {
+
+        console.log(
+          `Barbería: http://localhost:${PORT}`
+        );
+
+        console.log(
+          'EL MÁSTER RESERVAS INICIADO'
+        );
+
+      }
+    );
+
+  })
+  .catch(error => {
+
+    console.error(
+      'NO SE PUDO INICIAR LA AGENDA:',
+      error.message
+    );
+
+    process.exit(1);
+
+  });

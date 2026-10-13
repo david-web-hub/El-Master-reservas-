@@ -43,7 +43,7 @@ test('crear, editar y desactivar un barbero', async () => {
   await s.pedir('PATCH', `/api/admin/barbers/${id}`, { active: false });
   const pub = await s.pedir('GET', '/api/public/site');
   assert.ok(!pub.json.barbers.some(b => b.id === id), 'inactivo no aparece en la web');
-  assert.ok(s.leerDb().barbers.some(b => b.id === id), 'nunca se borra');
+  assert.ok((await s.datos()).barbers.some(b => b.id === id), 'nunca se borra');
 });
 
 test('barbero valida datos', async () => {
@@ -74,7 +74,7 @@ test('horarios: guardar, leer y aplicar a la disponibilidad', async () => {
   assert.equal(despues.json.custom, true);
   assert.deepEqual(despues.json.hours['6'], { open: true, from: '09:00', to: '14:00', breakFrom: '', breakTo: '' });
 
-  const db = s.leerDb();
+  const db = (await s.datos());
   assert.deepEqual(db.hours['6'], [['09:00', '14:00']]);
   assert.deepEqual(db.hours['1'], [['08:00', '12:00'], ['13:30', '19:00']]);
 

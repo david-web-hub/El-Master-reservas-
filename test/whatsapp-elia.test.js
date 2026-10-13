@@ -52,12 +52,12 @@ test('reserva completa por Elia con edición y confirmación', async () => {
   assert.match(await s.enviarWhatsApp('hora', from), /nueva hora/);
   assert.match(await s.enviarWhatsApp('11:00', from), /11:00 AM – 11:40 AM/);
 
-  assert.equal(s.leerDb().bookings.filter(b => b.phone === from).length, 0, 'nada se guarda antes de confirmar');
+  assert.equal((await s.datos()).bookings.filter(b => b.phone === from).length, 0, 'nada se guarda antes de confirmar');
   const ok = await s.enviarWhatsApp('confirmar', from);
   assert.match(ok, /Reserva confirmada/);
   const codigo = ok.match(/BK-\d+/)[0];
 
-  const guardadas = s.leerDb().bookings.filter(b => b.phone === from);
+  const guardadas = (await s.datos()).bookings.filter(b => b.phone === from);
   assert.equal(guardadas.length, 1);
   assert.equal(guardadas[0].id, codigo);
   assert.equal(guardadas[0].source, 'whatsapp');
@@ -85,7 +85,7 @@ test('Elia no confirma un horario que la web ocupó durante la conversación', a
   assert.equal(web.status, 201);
 
   assert.match(await s.enviarWhatsApp('confirmar', from), /acaba de ocuparse/);
-  assert.equal(s.leerDb().bookings.filter(b => b.date === LUNES && b.time === '15:00').length, 1, 'sin reservas duplicadas');
+  assert.equal((await s.datos()).bookings.filter(b => b.date === LUNES && b.time === '15:00').length, 1, 'sin reservas duplicadas');
 });
 
 test('las conversaciones de dos clientes no se mezclan', async () => {

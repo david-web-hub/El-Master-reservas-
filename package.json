@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check test/apoyo/servidor.js && node --check scripts/capturas.js && node --check scripts/respaldo/respaldo-api.js && node --check scripts/respaldo/identificar-base.js",
+    "check": "node --check server.js && node --check almacen.js && node --check test/apoyo/servidor.js && node --check scripts/capturas.js && node --check scripts/respaldo/respaldo-api.js && node --check scripts/respaldo/identificar-base.js && node --check scripts/migracion/comun.js && node --check scripts/migracion/importar.js && node --check scripts/migracion/verificar.js && node --check scripts/migracion/exportar.js",
     "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
