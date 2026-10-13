@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check test/apoyo/servidor.js && node --check scripts/capturas.js && node --check scripts/respaldo/respaldo-api.js && node --check scripts/respaldo/identificar-base.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
