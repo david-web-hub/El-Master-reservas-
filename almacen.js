@@ -215,6 +215,74 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-fase3-001',
+  descripcion: 'Cuentas, sesiones, recuperación de contraseña, roles y registro de seguridad',
+  sql: `
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      password_hash TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      failed_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until TIMESTAMPTZ,
+      password_changed_at TIMESTAMPTZ,
+      last_login_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email));
+
+    CREATE TABLE IF NOT EXISTS memberships (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      business_id TEXT NOT NULL REFERENCES businesses(id),
+      role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff', 'barber')),
+      barber_id TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, business_id)
+    );
+    CREATE INDEX IF NOT EXISTS memberships_business_idx ON memberships (business_id);
+
+    /* Solo se guarda el resumen (SHA-256) del identificador de sesión, nunca el valor. */
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      business_id TEXT NOT NULL REFERENCES businesses(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ,
+      ip TEXT,
+      user_agent TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
+
+    CREATE TABLE IF NOT EXISTS password_resets (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ip TEXT
+    );
+    CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets (user_id);
+
+    CREATE TABLE IF NOT EXISTS auth_events (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT,
+      business_id TEXT,
+      type TEXT NOT NULL,
+      ip TEXT,
+      detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS auth_events_user_idx ON auth_events (user_id, created_at);
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
@@ -878,7 +946,7 @@ function crearAlmacen(opciones) {
     reservas) y el catálogo de servicios de ejemplo. Lo usará el
     registro de cuentas (fase 3). No se expone todavía por HTTP.
   */
-  async function crearNegocio(datos = {}) {
+  async function crearNegocio(datos = {}, { client: externo = null } = {}) {
     if (modo !== 'postgres') throw new ErrorAlmacen('SOLO_POSTGRES', 'Crear barberías requiere PostgreSQL');
     const id = validarNegocio(String(datos.id || '').trim().toLowerCase());
     const slug = String(datos.slug || id).trim().toLowerCase();
@@ -896,9 +964,10 @@ function crearAlmacen(opciones) {
       bookings: []
     };
 
-    const client = await pool.connect();
+    /* Con "client" se ejecuta dentro de la transacción de quien llama (registro de cuentas). */
+    const client = externo || await pool.connect();
     try {
-      await client.query('BEGIN');
+      if (!externo) await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['master-reservas:negocio:' + id]);
       const existe = await client.query('SELECT 1 FROM businesses WHERE id = $1 OR slug = $2', [id, slug]);
       if (existe.rowCount) throw new ErrorAlmacen('NEGOCIO_EXISTE', `Ya existe una barbería con id o dirección "${slug}"`);
@@ -915,14 +984,14 @@ function crearAlmacen(opciones) {
       await client.query(
         `INSERT INTO platform_events (business_id, type, payload) VALUES ($1, 'business.created', $2::jsonb)`,
         [id, JSON.stringify(payloadNegocio(r.rows[0]))]);
-      await client.query('COMMIT');
+      if (!externo) await client.query('COMMIT');
       return payloadNegocio(r.rows[0]);
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
+      if (!externo) await client.query('ROLLBACK').catch(() => {});
       if (error.code === '23505') throw new ErrorAlmacen('NEGOCIO_EXISTE', 'Ya existe una barbería con ese id o dirección');
       throw error;
     } finally {
-      client.release();
+      if (!externo) client.release();
     }
   }
 

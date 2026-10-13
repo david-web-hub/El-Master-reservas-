@@ -43,6 +43,11 @@ async function capturar(destino) {
   try {
     for (const p of PANTALLAS) {
       const ctx = await navegador.newContext({ viewport: { width: p.width, height: p.height }, locale: 'es-EC', timezoneId: 'America/Guayaquil', reducedMotion: 'reduce' });
+      /* Versiones con cuentas: el panel se captura con la sesión del propietario de prueba. */
+      if (servidor.cookie) {
+        const [name, value] = servidor.cookie.split('=');
+        await ctx.addCookies([{ name, value, url: servidor.base }]);
+      }
       const page = await ctx.newPage();
       await page.clock.setFixedTime(FECHA_FIJA);
       const guardar = async nombre => {

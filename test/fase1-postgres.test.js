@@ -113,6 +113,7 @@ test.describe('Fase 1 · PostgreSQL', { skip: omitir }, () => {
     const s = await lanzarServidor({ postgres: true, negocio, db: 'basura' });
     try {
       await s.esperarLog(/EL MÁSTER RESERVAS INICIADO/, 15000);
+      await s.prepararPropietario();
       assert.ok((await s.pedir('GET', '/api/bookings')).json.some(b => b.id === id));
     } finally {
       await s.detener();

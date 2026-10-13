@@ -92,6 +92,14 @@ pool
    pueden incluir fotografía del comprobante.
 ========================================================= */
 
+/* Render (y otros proxys) envían la IP real del cliente en X-Forwarded-For. */
+app.set(
+  'trust proxy',
+  process.env.TRUST_PROXY
+    ? Number(process.env.TRUST_PROXY)
+    : (process.env.RENDER ? 1 : false)
+);
+
 app.use(
   express.json({
     limit: '5mb'
@@ -103,6 +111,179 @@ app.use(
     extended: true,
     limit: '5mb'
   })
+);
+
+
+/* =========================================================
+   SEGURIDAD DE CADA PETICIÓN
+   - Cabeceras de seguridad (no cambian el diseño).
+   - Las peticiones que modifican datos solo se aceptan desde
+     el mismo sitio (protección contra CSRF).
+   - Lee la sesión (cookie HttpOnly) y la deja en req.sesion.
+   - El panel (/admin.html) exige sesión: si no hay, va a la
+     pantalla de acceso.
+========================================================= */
+
+const COOKIE_SESION = 'mr_sesion';
+
+const ADMIN_SIN_CLAVE_LOCAL =
+  MODO_ALMACEN === 'archivo' &&
+  process.env.ADMIN_SIN_CLAVE_LOCAL === '1' &&
+  process.env.NODE_ENV !== 'production';
+
+function leerCookie(req, nombre) {
+
+  for (const parte of String(req.headers.cookie || '').split(';')) {
+
+    const i = parte.indexOf('=');
+
+    if (i > 0 && parte.slice(0, i).trim() === nombre) {
+
+      try {
+        return decodeURIComponent(parte.slice(i + 1).trim());
+      } catch (error) {
+        return null;
+      }
+
+    }
+
+  }
+
+  return null;
+
+}
+
+function cookieSegura(req) {
+
+  return (
+    req.secure ||
+    req.headers['x-forwarded-proto'] === 'https' ||
+    process.env.COOKIE_SECURE === '1'
+  );
+
+}
+
+function escribirCookieSesion(req, res, token, maxAgeSegundos) {
+
+  res.append(
+    'Set-Cookie',
+    `${COOKIE_SESION}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; ` +
+    `Max-Age=${maxAgeSegundos}` +
+    (cookieSegura(req) ? '; Secure' : '')
+  );
+
+}
+
+/* Rutas que no requieren sesión: página pública, reservas de clientes, WhatsApp y acceso. */
+function esRutaPublica(req) {
+
+  const p = req.path;
+  const m = req.method;
+
+  if (!p.startsWith('/api/')) return true;
+  if (p.startsWith('/api/auth/')) return true;
+  if (p.startsWith('/api/public/') && (m === 'GET' || m === 'HEAD')) return true;
+  if (p === '/api/availability' && m === 'GET') return true;
+  if (p === '/api/bookings' && m === 'POST') return true;
+  if (p === '/api/health' && m === 'GET') return true;
+
+  return false;
+
+}
+
+function origenPermitido(req) {
+
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
+  if (req.path.startsWith('/webhooks/')) return true;
+
+  const origen = req.headers.origin;
+
+  if (!origen) return true;
+
+  try {
+    return new URL(origen).host === req.headers.host;
+  } catch (error) {
+    return false;
+  }
+
+}
+
+app.use(
+  async (req, res, next) => {
+
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'SAMEORIGIN',
+      'Referrer-Policy': 'strict-origin-when-cross-origin'
+    });
+
+    if (cookieSegura(req)) {
+      res.set('Strict-Transport-Security', 'max-age=15552000');
+    }
+
+    if (!origenPermitido(req)) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Solicitud no permitida desde otro sitio'
+      });
+    }
+
+    req.sesion = null;
+
+    try {
+
+      if (ADMIN_SIN_CLAVE_LOCAL) {
+
+        /* Solo desarrollo local sin PostgreSQL. Nunca en producción. */
+        req.sesion = {
+          usuario: { id: 'local', email: 'local', name: 'Local' },
+          negocio: { id: DEFAULT_BUSINESS_ID, name: 'Local' },
+          rol: 'owner',
+          barberId: null,
+          local: true
+        };
+
+      } else if (
+        MODO_ALMACEN === 'postgres' &&
+        almacen.info().listo
+      ) {
+
+        const token =
+          leerCookie(req, COOKIE_SESION);
+
+        if (token) {
+
+          req.sesion =
+            await autenticacion.leerSesion(token);
+
+          req.tokenSesion = token;
+
+        }
+
+      }
+
+    } catch (error) {
+
+      console.error('ERROR LEYENDO SESIÓN:', error.message);
+      req.sesion = null;
+
+    }
+
+    if (
+      (req.path === '/admin.html' || req.path === '/admin') &&
+      !req.sesion
+    ) {
+      res.set('Cache-Control', 'no-store');
+      return res.redirect(302, '/acceso.html');
+    }
+
+    if (req.path === '/admin.html') {
+      res.set('Cache-Control', 'no-store');
+    }
+
+    next();
+
+  }
 );
 
 app.use(
@@ -117,11 +298,12 @@ app.use(
 
 /* =========================================================
    BARBERÍA DE CADA PETICIÓN
-   Todas las consultas usan negocioActual(). Por ahora todas
-   las peticiones pertenecen a la barbería principal; cuando
-   existan cuentas (inicio de sesión), resolverNegocio() la
-   obtendrá de la sesión, nunca de un dato que envíe el
-   navegador sin verificar.
+   Todas las consultas usan negocioActual().
+   - Rutas de administración: la barbería de la sesión
+     iniciada. Cualquier otro dato que envíe el navegador
+     (cuerpo, parámetros, cabeceras) se ignora.
+   - Rutas públicas: la barbería principal (la página pública
+     por barbería llega en la fase 4).
 ========================================================= */
 
 const contextoNegocio =
@@ -136,7 +318,23 @@ function negocioActual() {
 
 }
 
+function sesionActual() {
+
+  return (
+    contextoNegocio.getStore()?.sesion ||
+    null
+  );
+
+}
+
 function resolverNegocio(req) {
+
+  if (
+    !esRutaPublica(req) &&
+    req.sesion
+  ) {
+    return req.sesion.negocio.id;
+  }
 
   return DEFAULT_BUSINESS_ID;
 
@@ -155,7 +353,11 @@ app.use(
       );
 
       contextoNegocio.run(
-        { negocio },
+        {
+          negocio,
+          sesion: req.sesion,
+          origen: `${req.protocol}://${req.get('host')}`
+        },
         next
       );
 
@@ -167,6 +369,114 @@ app.use(
 
   }
 );
+
+
+/* =========================================================
+   PERMISOS POR RUTA
+   Todo lo que no es público exige sesión. Cada ruta pide un
+   permiso; lo que no aparece en la lista solo lo puede usar
+   el propietario (se niega por defecto).
+========================================================= */
+
+const {
+  crearAutenticacion,
+  ErrorAuth,
+  tienePermiso,
+  permisosDe,
+  NOMBRES_ROL
+} = require('./autenticacion');
+
+const REGLAS_PERMISO = [
+  ['GET', /^\/api\/config$/, ['panel']],
+  ['GET', /^\/api\/bookings$/, ['reservas', 'reservas.propias']],
+  ['PATCH', /^\/api\/bookings\/[^/]+$/, ['reservas', 'reservas.propias']],
+  ['POST', /^\/api\/sales$/, ['caja']],
+  ['*', /^\/api\/cash\//, ['caja']],
+  ['GET', /^\/api\/admin\/products$/, ['productos', 'productos.ver']],
+  ['*', /^\/api\/admin\/products(\/|$)/, ['productos']],
+  ['GET', /^\/api\/admin\/reports$/, ['informes']],
+  ['GET', /^\/api\/admin\/backup$/, ['respaldo']],
+  ['GET', /^\/api\/admin\/usuarios$/, ['usuarios.ver']],
+  ['*', /^\/api\/admin\/usuarios(\/|$)/, ['usuarios']],
+  ['GET', /^\/api\/admin\/(services|business|barbers|settings|hours|media)$/, ['panel']],
+  ['*', /^\/api\/admin\/(services|business|barbers|settings|hours|media)(\/|$)/, ['configuracion']]
+];
+
+function permisosRequeridos(req) {
+
+  for (const [metodo, patron, permisos] of REGLAS_PERMISO) {
+
+    if (
+      (metodo === '*' || metodo === req.method) &&
+      patron.test(req.path)
+    ) {
+      return permisos;
+    }
+
+  }
+
+  return ['*'];
+
+}
+
+app.use(
+  (req, res, next) => {
+
+    if (esRutaPublica(req)) {
+      return next();
+    }
+
+    if (
+      MODO_ALMACEN === 'archivo' &&
+      !ADMIN_SIN_CLAVE_LOCAL
+    ) {
+      return res.status(503).json({
+        ok: false,
+        error: 'La administración requiere PostgreSQL'
+      });
+    }
+
+    if (!req.sesion) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Inicia sesión para continuar'
+      });
+    }
+
+    const requeridos =
+      permisosRequeridos(req);
+
+    if (
+      !requeridos.some(
+        permiso =>
+          tienePermiso(req.sesion.rol, permiso)
+      )
+    ) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Tu cuenta no tiene permiso para esta acción'
+      });
+    }
+
+    next();
+
+  }
+);
+
+
+/* Barbero con permiso solo sobre sus propias reservas. */
+function soloReservasPropias() {
+
+  const sesion =
+    sesionActual();
+
+  return Boolean(
+    sesion &&
+    !tienePermiso(sesion.rol, 'reservas') &&
+    tienePermiso(sesion.rol, 'reservas.propias')
+  );
+
+}
 
 
 /* =========================================================
@@ -501,6 +811,92 @@ function nuevoIdReserva() {
 
 
 /* =========================================================
+   CORREO (recuperación de contraseña e invitaciones)
+   Con RESEND_API_KEY y CORREO_REMITENTE se envía de verdad.
+   Sin configurar: en desarrollo se muestra en la consola; en
+   producción no se envía ni se muestra el enlace.
+========================================================= */
+
+async function enviarCorreo({ para, asunto, texto, enlace }) {
+
+  if (
+    process.env.RESEND_API_KEY &&
+    process.env.CORREO_REMITENTE
+  ) {
+
+    const r =
+      await fetch(
+        'https://api.resend.com/emails',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            from: process.env.CORREO_REMITENTE,
+            to: [para],
+            subject: asunto,
+            text: texto
+          })
+        }
+      );
+
+    if (!r.ok) {
+      console.error('ERROR ENVIANDO CORREO:', r.status);
+    }
+
+    return;
+
+  }
+
+
+  if (process.env.NODE_ENV === 'production') {
+
+    console.warn(
+      'AVISO: correo no configurado; no se envió el mensaje de recuperación.'
+    );
+
+    return;
+
+  }
+
+
+  console.log(
+    `[DEMO CORREO] ${para} ${enlace}`
+  );
+
+}
+
+
+function urlPublica() {
+
+  if (process.env.PUBLIC_BASE_URL) {
+    return process.env.PUBLIC_BASE_URL.replace(/\/+$/, '');
+  }
+
+  /* Solo en desarrollo se usa el host de la petición (evita enlaces a dominios falsos). */
+  return process.env.NODE_ENV === 'production'
+    ? ''
+    : (contextoNegocio.getStore()?.origen || '');
+
+}
+
+
+const autenticacion =
+  MODO_ALMACEN === 'postgres'
+    ? crearAutenticacion({
+        pool,
+        almacen,
+        enviarCorreo,
+        urlBase: urlPublica,
+        limiteIp:
+          Number(process.env.AUTH_LIMITE_IP) || 30
+      })
+    : null;
+
+
+/* =========================================================
    INICIALIZAR POSTGRESQL
 ========================================================= */
 
@@ -762,8 +1158,19 @@ app.get(
         readDb();
 
 
+      /* Un barbero solo ve sus propias reservas. */
+      const lista =
+        soloReservasPropias()
+          ? (db.bookings || []).filter(
+              item =>
+                item.barberId &&
+                item.barberId === sesionActual().barberId
+            )
+          : (db.bookings || []);
+
+
       res.json(
-        db.bookings || []
+        lista
       );
 
     } catch (error) {
@@ -804,7 +1211,11 @@ app.patch(
         db.bookings.find(
           item =>
             String(item.id) ===
-            String(req.params.id)
+            String(req.params.id) &&
+            (
+              !soloReservasPropias() ||
+              item.barberId === sesionActual().barberId
+            )
         );
 
 
@@ -10442,6 +10853,302 @@ app.get(
 
   }
 );
+
+
+/* =========================================================
+   CUENTAS: REGISTRO, ACCESO Y RECUPERACIÓN
+   Las respuestas nunca incluyen el identificador de sesión
+   (va solo en la cookie HttpOnly) ni revelan si un correo
+   está registrado.
+========================================================= */
+
+function datosCliente(req) {
+
+  return {
+    ip: req.ip,
+    userAgent: req.headers['user-agent']
+  };
+
+}
+
+function responderErrorAuth(res, error, contexto) {
+
+  if (error instanceof ErrorAuth) {
+
+    const cuerpo = {
+      ok: false,
+      error: error.message,
+      code: error.code
+    };
+
+    if (error.negocios) cuerpo.businesses = error.negocios;
+
+    return res.status(error.status).json(cuerpo);
+
+  }
+
+  console.error(`ERROR ${contexto}:`, error);
+
+  return res.status(500).json({
+    ok: false,
+    error: 'No se pudo completar la operación'
+  });
+
+}
+
+function requiereAutenticacion(res) {
+
+  if (!autenticacion) {
+
+    res.status(503).json({
+      ok: false,
+      error: 'Las cuentas requieren PostgreSQL'
+    });
+
+    return false;
+
+  }
+
+  return true;
+
+}
+
+function descripcionSesion(sesion) {
+
+  return {
+    ok: true,
+    user: sesion.usuario,
+    business: sesion.negocio,
+    role: sesion.rol,
+    roleName: NOMBRES_ROL[sesion.rol] || sesion.rol,
+    barberId: sesion.barberId || null,
+    permissions: [...permisosDe(sesion.rol)]
+  };
+
+}
+
+const SEGUNDOS_SESION = 14 * 24 * 3600;
+
+app.post('/api/auth/registro', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  if (process.env.REGISTRO_ABIERTO === '0') {
+    return res.status(403).json({ ok: false, error: 'El registro de nuevas barberías no está disponible' });
+  }
+
+  try {
+
+    const r =
+      await autenticacion.registrar(req.body || {}, datosCliente(req));
+
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+
+    res.status(201).json({
+      ok: true,
+      user: r.usuario,
+      business: r.negocio,
+      role: r.rol
+    });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'REGISTRANDO CUENTA');
+
+  }
+
+});
+
+app.post('/api/auth/login', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    const b = req.body || {};
+
+    const r =
+      await autenticacion.iniciarSesion(
+        { email: b.email, password: b.password, businessId: b.businessId },
+        datosCliente(req)
+      );
+
+    /* Una sesión anterior en este navegador se cierra. */
+    if (req.tokenSesion) {
+      await autenticacion.cerrarSesion(req.tokenSesion).catch(() => {});
+    }
+
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+
+    res.json({
+      ok: true,
+      user: r.usuario,
+      business: r.negocio,
+      role: r.rol
+    });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'INICIANDO SESIÓN');
+
+  }
+
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+
+  try {
+
+    if (autenticacion && req.tokenSesion) {
+      await autenticacion.cerrarSesion(req.tokenSesion, datosCliente(req));
+    }
+
+  } catch (error) {
+
+    console.error('ERROR CERRANDO SESIÓN:', error.message);
+
+  }
+
+  escribirCookieSesion(req, res, '', 0);
+
+  res.json({ ok: true });
+
+});
+
+app.get('/api/auth/sesion', (req, res) => {
+
+  res.set('Cache-Control', 'no-store');
+
+  if (!req.sesion) {
+    return res.status(401).json({ ok: false, error: 'No has iniciado sesión' });
+  }
+
+  res.json(descripcionSesion(req.sesion));
+
+});
+
+app.post('/api/auth/recuperar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    await autenticacion.solicitarRecuperacion(req.body?.email, datosCliente(req));
+
+  } catch (error) {
+
+    if (error instanceof ErrorAuth && error.status === 429) {
+      return responderErrorAuth(res, error, 'RECUPERANDO');
+    }
+
+    console.error('ERROR SOLICITANDO RECUPERACIÓN:', error.message);
+
+  }
+
+  res.json({
+    ok: true,
+    message: 'Si el correo está registrado, recibirás un enlace para crear una nueva contraseña.'
+  });
+
+});
+
+app.post('/api/auth/restablecer', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    await autenticacion.restablecerClave(req.body?.token, req.body?.password, datosCliente(req));
+
+    res.json({ ok: true, message: 'Contraseña actualizada. Ya puedes iniciar sesión.' });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'RESTABLECIENDO CONTRASEÑA');
+
+  }
+
+});
+
+app.post('/api/auth/cambiar-clave', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  if (!req.sesion || req.sesion.local) {
+    return res.status(401).json({ ok: false, error: 'Inicia sesión para continuar' });
+  }
+
+  try {
+
+    await autenticacion.cambiarClave(
+      req.sesion, req.body?.currentPassword, req.body?.newPassword, req.tokenSesion, datosCliente(req));
+
+    res.json({ ok: true, message: 'Contraseña actualizada. Las demás sesiones se cerraron.' });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'CAMBIANDO CONTRASEÑA');
+
+  }
+
+});
+
+
+/* ---------------- USUARIOS DE LA BARBERÍA ---------------- */
+
+app.get('/api/admin/usuarios', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    res.json({ ok: true, users: await autenticacion.listarUsuarios(negocioActual()) });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'LISTANDO USUARIOS');
+
+  }
+
+});
+
+app.post('/api/admin/usuarios', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    const usuario =
+      await autenticacion.agregarUsuario(sesionActual(), req.body || {}, readDb(), datosCliente(req));
+
+    res.status(201).json({ ok: true, user: usuario });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'AGREGANDO USUARIO');
+
+  }
+
+});
+
+app.patch('/api/admin/usuarios/:id', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    const usuario =
+      await autenticacion.modificarUsuario(sesionActual(), req.params.id, req.body || {}, readDb(), datosCliente(req));
+
+    res.json({ ok: true, user: usuario });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'MODIFICANDO USUARIO');
+
+  }
+
+});
 
 
 /* =========================================================

@@ -57,7 +57,7 @@ function prepararCarpeta(db) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'master-reservas-prueba-'));
   fs.copyFileSync(path.join(RAIZ, 'server.js'), path.join(dir, 'server.js'));
   /* Módulos propios de la aplicación (pueden no existir en versiones anteriores). */
-  for (const extra of ['almacen.js']) {
+  for (const extra of ['almacen.js', 'autenticacion.js']) {
     if (fs.existsSync(path.join(RAIZ, extra))) fs.copyFileSync(path.join(RAIZ, extra), path.join(dir, extra));
   }
   fs.cpSync(path.join(RAIZ, 'public'), path.join(dir, 'public'), { recursive: true });
@@ -83,9 +83,12 @@ function negocioNuevo() {
 }
 
 class Servidor {
-  constructor(dir, { postgres, negocio }) {
+  constructor(dir, { postgres, negocio, env = {}, sesion = true }) {
     this.dir = dir;
     this.postgres = postgres;
+    this.envExtra = env;
+    this.conSesion = sesion;
+    this.cookie = null;
     this.negocio = negocio || negocioNuevo();
     this.logs = [];
     this.stdout = '';
@@ -106,7 +109,32 @@ class Servidor {
   async iniciar() {
     await this.arrancar();
     await this.esperarLog(/EL MÁSTER RESERVAS INICIADO/, 20000);
+    if (this.postgres && this.conSesion) await this.prepararPropietario();
     return this;
+  }
+
+  /*
+    Crea el propietario de la barbería de prueba e inicia sesión.
+    Versiones sin cuentas (anteriores a la fase 3) se usan sin sesión.
+  */
+  async prepararPropietario() {
+    const sondeo = await this.pedir('GET', '/api/auth/sesion');
+    if (sondeo.status === 404) return;
+    this.correo = `propietario-${this.negocio}@prueba.test`;
+    this.clave = 'Clave-de-prueba-segura-1';
+    await crearCuenta(this.negocio, this.correo, this.clave, 'owner');
+    this.cookie = await this.iniciarSesion(this.correo, this.clave);
+  }
+
+  /* Inicia sesión y devuelve la cookie (no cambia la sesión por defecto del servidor). */
+  async iniciarSesion(email, password, businessId) {
+    const r = await fetch(this.base + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, businessId })
+    });
+    if (r.status !== 200) throw new Error('No se pudo iniciar sesión: ' + r.status + ' ' + await r.text());
+    return cookieDe(r);
   }
 
   async arrancar() {
@@ -119,18 +147,23 @@ class Servidor {
       TZ: 'UTC',
       WHATSAPP_VERIFY_TOKEN: VERIFY_TOKEN,
       WHATSAPP_TOKEN: '',
-      WHATSAPP_PHONE_NUMBER_ID: ''
+      WHATSAPP_PHONE_NUMBER_ID: '',
+      /* Límite alto: todas las pruebas salen de la misma IP. */
+      AUTH_LIMITE_IP: '100000'
     };
     const pg = this.postgres ? urlBasePruebas() : null;
     if (pg) {
       env.DATABASE_URL = pg;
       env.DEFAULT_BUSINESS_ID = this.negocio;
     } else {
+      /* Sin base (solo desarrollo): administración abierta en local. */
+      env.ADMIN_SIN_CLAVE_LOCAL = '1';
       /* Sin base: apunta a un puerto cerrado para que pg falle de inmediato. */
       env.PGHOST = '127.0.0.1';
       env.PGPORT = '1';
       env.PGCONNECT_TIMEOUT = '1';
     }
+    Object.assign(env, this.envExtra);
     this.proc = spawn(process.execPath, ['server.js'], { cwd: this.dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const recoger = chunk => {
       for (const linea of String(chunk).split('\n')) if (linea.trim()) this.logs.push(linea);
@@ -161,11 +194,17 @@ class Servidor {
     await salida;
   }
 
-  async pedir(metodo, ruta, cuerpo) {
+  /* opciones.cookie: null = sin sesión; texto = otra sesión; por defecto, la del propietario. */
+  async pedir(metodo, ruta, cuerpo, opciones = {}) {
+    const headers = { ...(opciones.headers || {}) };
+    if (cuerpo !== undefined) headers['Content-Type'] = 'application/json';
+    const cookie = 'cookie' in opciones ? opciones.cookie : this.cookie;
+    if (cookie) headers.Cookie = cookie;
     const res = await fetch(this.base + ruta, {
       method: metodo,
-      headers: cuerpo === undefined ? {} : { 'Content-Type': 'application/json' },
-      body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo)
+      headers,
+      redirect: 'manual',
+      body: cuerpo === undefined ? undefined : (typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo))
     });
     const texto = await res.text();
     let json = null;
@@ -204,20 +243,57 @@ class Servidor {
   borrar() { fs.rmSync(this.dir, { recursive: true, force: true }); }
 }
 
+/* Cookie de sesión de una respuesta. */
+function cookieDe(respuesta) {
+  const lista = typeof respuesta.headers.getSetCookie === 'function'
+    ? respuesta.headers.getSetCookie()
+    : [respuesta.headers.get('set-cookie')].filter(Boolean);
+  const c = lista.find(x => x.startsWith('mr_sesion='));
+  return c ? c.split(';')[0] : null;
+}
+
+/* Crea una cuenta con contraseña y acceso a una barbería, directamente en la base de pruebas. */
+async function crearCuenta(negocio, email, clave, rol = 'owner', barberId = null) {
+  const { Pool } = require('pg');
+  const { cifrarClave } = require(path.join(__dirname, '..', '..', 'autenticacion.js'));
+  const url = urlBasePruebas();
+  const sinSsl = new URL(url).searchParams.get('sslmode') === 'disable';
+  const pool = new Pool({ connectionString: url, ssl: sinSsl ? false : { rejectUnauthorized: false }, max: 1 });
+  try {
+    const hash = await cifrarClave(clave);
+    const ex = await pool.query('SELECT id FROM users WHERE lower(email) = lower($1)', [email]);
+    const id = ex.rowCount ? ex.rows[0].id : 'usr_' + crypto.randomBytes(8).toString('hex');
+    if (ex.rowCount) {
+      await pool.query('UPDATE users SET password_hash = $2 WHERE id = $1', [id, hash]);
+    } else {
+      await pool.query('INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, $3, $4)', [id, email, 'Persona de prueba', hash]);
+    }
+    await pool.query(
+      `INSERT INTO memberships (user_id, business_id, role, barber_id) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, business_id) DO UPDATE SET role = EXCLUDED.role, barber_id = EXCLUDED.barber_id, status = 'active'`,
+      [id, negocio, rol, barberId]);
+    return id;
+  } finally {
+    await pool.end();
+  }
+}
+
 /* Servidor nuevo en una carpeta nueva (equivale a un despliegue limpio). */
-async function iniciarServidor({ db, postgres = postgresPorDefecto(), negocio } = {}) {
-  return new Servidor(prepararCarpeta(db), { postgres, negocio }).iniciar();
+async function iniciarServidor({ db, postgres = postgresPorDefecto(), negocio, env, sesion } = {}) {
+  return new Servidor(prepararCarpeta(db), { postgres, negocio, env, sesion }).iniciar();
 }
 
 /* Arranca sin esperar a que el servidor quede listo (para probar arranques que deben fallar). */
-async function lanzarServidor({ db, postgres = postgresPorDefecto(), negocio } = {}) {
-  return new Servidor(prepararCarpeta(db), { postgres, negocio }).arrancar();
+async function lanzarServidor({ db, postgres = postgresPorDefecto(), negocio, env } = {}) {
+  return new Servidor(prepararCarpeta(db), { postgres, negocio, env }).arrancar();
 }
 
 /* Reinicia el proceso conservando la misma carpeta (equivale a reiniciar en un disco persistente). */
 async function reiniciar(servidor) {
   await servidor.detener();
-  const nuevo = new Servidor(servidor.dir, { postgres: servidor.postgres, negocio: servidor.negocio });
+  const nuevo = new Servidor(servidor.dir, {
+    postgres: servidor.postgres, negocio: servidor.negocio, env: servidor.envExtra, sesion: servidor.conSesion
+  });
   return nuevo.iniciar();
 }
 
@@ -230,4 +306,4 @@ function proximoDia(diaSemana) {
   return d.toISOString().slice(0, 10);
 }
 
-module.exports = { iniciarServidor, lanzarServidor, reiniciar, urlBasePruebas, postgresPorDefecto, negocioNuevo, proximoDia, RAIZ, VERIFY_TOKEN };
+module.exports = { crearCuenta, cookieDe, iniciarServidor, lanzarServidor, reiniciar, urlBasePruebas, postgresPorDefecto, negocioNuevo, proximoDia, RAIZ, VERIFY_TOKEN };

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#080808">
+<meta name="robots" content="noindex">
+<title>Master Reservas | Cerrando sesión</title>
+<style>
+body {
+  margin: 0; min-height: 100vh; display: grid; place-items: center;
+  background: radial-gradient(circle at top right, #17202a 0, #090b0e 35%, #060708 100%);
+  color: #9da6af; font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+</style>
+</head>
+<body>
+<p>Cerrando sesión…</p>
+<script>
+fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
+  .catch(() => {})
+  .finally(() => location.replace('/acceso.html'));
+</script>
+</body>
+</html>
