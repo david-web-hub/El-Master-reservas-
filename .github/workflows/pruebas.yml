@@ -45,6 +45,12 @@ jobs:
       - name: Instalar dependencias (sin modificar package.json)
         run: npm install --no-package-lock --no-audit --no-fund
 
+      # Chromium para las pruebas del panel en el navegador (fase 4).
+      - name: Instalar Chromium
+        run: |
+          npm install --no-save --no-package-lock --no-audit --no-fund playwright-core@1.56.1
+          npx playwright-core install --with-deps chromium
+
       - name: Comprobar sintaxis
         run: npm run check
 
@@ -95,8 +101,9 @@ jobs:
           sudo -u postgres createdb -O prueba reservas_test
           node scripts/capturas.js capturar capturas/despues
 
+      # Solo se aceptan los cambios de diseño aprobados en test/diseno/cambios-esperados.json.
       - name: Comparar
-        run: node scripts/capturas.js comparar capturas/antes capturas/despues 0.1
+        run: node scripts/capturas.js comparar capturas/antes capturas/despues 0.1 --esperados test/diseno/cambios-esperados.json
 
       - name: Guardar capturas
         if: always()

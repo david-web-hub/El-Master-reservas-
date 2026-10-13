@@ -266,7 +266,9 @@ async function crearCuenta(negocio, email, clave, rol = 'owner', barberId = null
     if (ex.rowCount) {
       await pool.query('UPDATE users SET password_hash = $2 WHERE id = $1', [id, hash]);
     } else {
-      await pool.query('INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, $3, $4)', [id, email, 'Persona de prueba', hash]);
+      await pool.query(
+        'INSERT INTO users (id, email, name, password_hash, email_verified_at) VALUES ($1, $2, $3, $4, NOW())',
+        [id, email, 'Persona de prueba', hash]);
     }
     await pool.query(
       `INSERT INTO memberships (user_id, business_id, role, barber_id) VALUES ($1, $2, $3, $4)

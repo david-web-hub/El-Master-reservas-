@@ -283,6 +283,50 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-fase4-001',
+  descripcion: 'Verificación de correo y verificación en dos pasos (opcional)',
+  sql: `
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_secret TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT;
+
+    /* Las cuentas creadas antes de esta fase ya demostraron su correo al crear la contraseña. */
+    UPDATE users SET email_verified_at = COALESCE(password_changed_at, created_at)
+    WHERE email_verified_at IS NULL AND password_hash IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS email_verifications (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS email_verifications_user_idx ON email_verifications (user_id);
+
+    CREATE TABLE IF NOT EXISTS totp_recovery_codes (
+      code_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS totp_recovery_codes_user_idx ON totp_recovery_codes (user_id);
+
+    /* Paso intermedio del inicio de sesión cuando la cuenta tiene verificación en dos pasos. */
+    CREATE TABLE IF NOT EXISTS login_challenges (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      business_id TEXT NOT NULL REFERENCES businesses(id),
+      expires_at TIMESTAMPTZ NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 

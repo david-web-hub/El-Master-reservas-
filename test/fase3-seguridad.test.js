@@ -18,14 +18,28 @@ function crearPool() {
   return new Pool({ connectionString: URL_PG, ssl: sinSsl ? false : { rejectUnauthorized: false }, max: 2 });
 }
 
-/* Registra una barbería nueva por la API y devuelve su cookie e id. */
+/*
+  Registra una barbería nueva por la API, confirma el correo con el enlace
+  que llega (modo demostración) e inicia sesión. Devuelve la cookie.
+*/
 async function registrar(s, extra = {}) {
   const id = unico();
   const datos = {
     businessName: `Barbería ${id}`, name: 'Dueña Prueba', email: `duena-${id}@prueba.test`, password: CLAVE, ...extra
   };
+  const desde = s.logs.length;
   const r = await s.pedir('POST', '/api/auth/registro', datos, { cookie: null });
-  return { r, cookie: cookieDe(r), datos };
+  let cookie = cookieDe(r);
+  if (r.status === 201 && r.json.verificationRequired) {
+    const linea = await s.esperarLog(new RegExp(`\\[DEMO CORREO\\] ${datos.email.replace(/[.+]/g, '\\$&')} `), 5000, desde);
+    const token = linea.match(/verificar=([A-Za-z0-9_-]+)/)[1];
+    const v = await s.pedir('POST', '/api/auth/verificar', { token }, { cookie: null });
+    if (v.status !== 200) throw new Error('No se pudo verificar el correo: ' + v.texto);
+    const login = await s.pedir('POST', '/api/auth/login', { email: datos.email, password: CLAVE }, { cookie: null });
+    cookie = cookieDe(login);
+    r.login = login;
+  }
+  return { r, cookie, datos };
 }
 
 async function enlaceDeCorreo(s, correo, desde) {
@@ -93,10 +107,12 @@ test.describe('Fase 3 · seguridad', { skip: omitir }, () => {
     const { r, cookie, datos } = await registrar(s, { country: 'CO', currency: 'COP', timezone: 'America/Bogota' });
     assert.equal(r.status, 201, r.texto);
     assert.equal(r.json.role, 'owner');
-    const setCookie = r.headers.getSetCookie().find(c => c.startsWith('mr_sesion='));
+    assert.equal(r.json.verificationRequired, true, 'el registro exige confirmar el correo');
+    assert.equal(cookieDe(r), null, 'sin correo confirmado no hay sesión');
+    const setCookie = r.login.headers.getSetCookie().find(c => c.startsWith('mr_sesion='));
     assert.match(setCookie, /HttpOnly/);
     assert.match(setCookie, /SameSite=Lax/);
-    assert.ok(!r.texto.includes(cookie.split('=')[1]), 'el identificador de sesión no va en el cuerpo');
+    assert.ok(!r.login.texto.includes(cookie.split('=')[1]), 'el identificador de sesión no va en el cuerpo');
 
     const sesion = await s.pedir('GET', '/api/auth/sesion', undefined, { cookie });
     assert.equal(sesion.json.business.id, r.json.business.id);

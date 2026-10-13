@@ -103,6 +103,87 @@ function tienePermiso(rol, permiso) {
 }
 
 /* =========================================================
+   VERIFICACIÓN EN DOS PASOS (TOTP, RFC 6238)
+   Compatible con Google Authenticator, Microsoft
+   Authenticator, 1Password, etc. El secreto se guarda cifrado
+   con AES-256-GCM; los códigos de recuperación, como resumen.
+========================================================= */
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32(buf) {
+  let bits = 0;
+  let valor = 0;
+  let salida = '';
+  for (const byte of buf) {
+    valor = (valor << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      salida += BASE32[(valor >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) salida += BASE32[(valor << (5 - bits)) & 31];
+  return salida;
+}
+
+function desdeBase32(texto) {
+  const limpio = String(texto).toUpperCase().replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let valor = 0;
+  const bytes = [];
+  for (const c of limpio) {
+    valor = (valor << 5) | BASE32.indexOf(c);
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((valor >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(bytes);
+}
+
+function codigoTotp(secreto, paso) {
+  const contador = Buffer.alloc(8);
+  contador.writeBigUInt64BE(BigInt(paso));
+  const h = crypto.createHmac('sha1', secreto).update(contador).digest();
+  const o = h[h.length - 1] & 15;
+  const n = ((h[o] & 127) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 1000000).padStart(6, '0');
+}
+
+/* Devuelve el paso de tiempo del código si es válido (±30 s de tolerancia); si no, null. */
+function pasoTotpValido(secreto, codigo, ahora = Date.now()) {
+  const c = String(codigo || '').replace(/\s/g, '');
+  if (!/^\d{6}$/.test(c)) return null;
+  const actual = Math.floor(ahora / 30000);
+  for (const d of [0, -1, 1]) {
+    const esperado = Buffer.from(codigoTotp(secreto, actual + d));
+    if (crypto.timingSafeEqual(esperado, Buffer.from(c))) return actual + d;
+  }
+  return null;
+}
+
+function cifrar(clave, datos) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', clave, iv);
+  const enc = Buffer.concat([c.update(datos), c.final()]);
+  return ['v1', iv.toString('base64'), c.getAuthTag().toString('base64'), enc.toString('base64')].join('.');
+}
+
+function descifrar(clave, texto) {
+  const [v, iv, tag, enc] = String(texto || '').split('.');
+  if (v !== 'v1') throw new Error('Formato de secreto desconocido');
+  const d = crypto.createDecipheriv('aes-256-gcm', clave, Buffer.from(iv, 'base64'));
+  d.setAuthTag(Buffer.from(tag, 'base64'));
+  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]);
+}
+
+function codigoRecuperacion() {
+  const t = crypto.randomBytes(5).toString('hex');
+  return `${t.slice(0, 5)}-${t.slice(5)}`;
+}
+
+/* =========================================================
    LIMITADOR DE INTENTOS EN MEMORIA (por IP y acción)
 ========================================================= */
 function crearLimitador({ maximo, ventanaMs }) {
@@ -135,6 +216,11 @@ function crearAutenticacion({
   maxIntentosCuenta = 10,
   bloqueoMs = 15 * 60 * 1000,
   limiteIp = 30,
+  /* Exigir correo verificado a las cuentas creadas con el registro. */
+  verificarCorreo = true,
+  /* Clave de 32 bytes para cifrar los secretos de dos pasos; sin ella, la función no está disponible. */
+  claveDosPasos = null,
+  nombreServicio = 'Master Reservas',
   registro = console
 }) {
   const limitador = crearLimitador({ maximo: limiteIp, ventanaMs: 15 * 60 * 1000 });
@@ -207,15 +293,25 @@ function crearAutenticacion({
       }
       const userId = nuevoId();
       await client.query(
-        `INSERT INTO users (id, email, name, password_hash, password_changed_at) VALUES ($1, $2, $3, $4, NOW())`,
-        [userId, correo, nombre, hash]);
+        `INSERT INTO users (id, email, name, password_hash, password_changed_at, email_verified_at)
+         VALUES ($1, $2, $3, $4, NOW(), $5)`,
+        [userId, correo, nombre, hash, verificarCorreo ? null : new Date()]);
       await client.query(
         `INSERT INTO memberships (user_id, business_id, role) VALUES ($1, $2, 'owner')`, [userId, negocio.id]);
-      const token = await crearSesion(client, userId, negocio.id, { ip, userAgent });
+      /* Con verificación: no se abre sesión hasta confirmar el correo. */
+      const token = verificarCorreo ? null : await crearSesion(client, userId, negocio.id, { ip, userAgent });
+      const tokenVerificacion = verificarCorreo ? await crearVerificacion(client, userId) : null;
       await evento(client, 'registro', { userId, businessId: negocio.id, ip });
       await client.query('COMMIT');
       await almacen.cargarNegocio(negocio.id);
-      return { token, usuario: { id: userId, email: correo, name: nombre }, negocio, rol: 'owner' };
+      if (tokenVerificacion) await enviarVerificacion(correo, nombre, tokenVerificacion);
+      return {
+        token,
+        verificacionPendiente: Boolean(tokenVerificacion),
+        usuario: { id: userId, email: correo, name: nombre },
+        negocio,
+        rol: 'owner'
+      };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
@@ -256,6 +352,11 @@ function crearAutenticacion({
       await evento(null, 'login_fallido', { userId: u.id, ip, detalle: { fallos } });
       throw generico;
     }
+    /* Solo después de comprobar la contraseña: no revela qué correos existen. */
+    if (verificarCorreo && !u.email_verified_at) {
+      await evento(null, 'login_sin_verificar', { userId: u.id, ip });
+      throw new ErrorAuth(403, 'CORREO_NO_VERIFICADO', 'Confirma tu correo para entrar. Revisa tu bandeja o pide un nuevo enlace.');
+    }
     const negocios = await negociosDeUsuario(u.id);
     if (!negocios.length) throw new ErrorAuth(403, 'SIN_BARBERIA', 'Tu cuenta no tiene acceso a ninguna barbería activa');
     let elegido = negocios[0];
@@ -266,7 +367,21 @@ function crearAutenticacion({
       throw Object.assign(new ErrorAuth(409, 'ELEGIR_BARBERIA', 'Elige la barbería a la que quieres entrar'),
         { negocios: negocios.map(n => ({ id: n.id, name: n.name })) });
     }
-    await pool.query('UPDATE users SET failed_attempts = 0, locked_until = NULL, last_login_at = NOW() WHERE id = $1', [u.id]);
+    await pool.query('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = $1', [u.id]);
+    /* Verificación en dos pasos activada: falta el código. */
+    if (u.totp_enabled_at) {
+      const desafio = tokenAleatorio();
+      await pool.query(
+        `INSERT INTO login_challenges (token_hash, user_id, business_id, expires_at)
+         VALUES ($1, $2, $3, NOW() + interval '5 minutes')`, [resumen(desafio), u.id, elegido.id]);
+      await evento(null, 'login_paso1', { userId: u.id, businessId: elegido.id, ip });
+      return { requiereDosPasos: true, desafio };
+    }
+    return completarInicio(u, elegido, { ip, userAgent });
+  }
+
+  async function completarInicio(u, elegido, { ip, userAgent } = {}) {
+    await pool.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [u.id]);
     await almacen.cargarNegocio(elegido.id);
     const token = await crearSesion(null, u.id, elegido.id, { ip, userAgent });
     await evento(null, 'login', { userId: u.id, businessId: elegido.id, ip });
@@ -277,7 +392,7 @@ function crearAutenticacion({
   async function leerSesion(token) {
     if (!token || typeof token !== 'string' || token.length > 100) return null;
     const r = await pool.query(
-      `SELECT s.token_hash, s.user_id, s.business_id, s.last_seen_at, u.email, u.name,
+      `SELECT s.token_hash, s.user_id, s.business_id, s.last_seen_at, u.email, u.name, u.totp_enabled_at,
               m.role, m.barber_id, b.name AS business_name, b.status AS business_status
        FROM sessions s
        JOIN users u ON u.id = s.user_id AND u.status = 'active'
@@ -294,7 +409,8 @@ function crearAutenticacion({
       usuario: { id: s.user_id, email: s.email, name: s.name },
       negocio: { id: s.business_id, name: s.business_name },
       rol: s.role,
-      barberId: s.barber_id || null
+      barberId: s.barber_id || null,
+      dosPasos: Boolean(s.totp_enabled_at)
     };
   }
 
@@ -352,7 +468,7 @@ function crearAutenticacion({
       if (!usado.rowCount) throw new ErrorAuth(400, 'ENLACE_INVALIDO', 'El enlace ya se utilizó');
       await client.query(
         `UPDATE users SET password_hash = $2, password_changed_at = NOW(), failed_attempts = 0, locked_until = NULL,
-                updated_at = NOW() WHERE id = $1`, [fila.user_id, hash]);
+                email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW() WHERE id = $1`, [fila.user_id, hash]);
       /* Cierra todas las sesiones abiertas con la contraseña anterior. */
       await client.query('UPDATE sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL', [fila.user_id]);
       await evento(client, 'clave_restablecida', { userId: fila.user_id, ip });
@@ -378,6 +494,164 @@ function crearAutenticacion({
     await pool.query('UPDATE sessions SET revoked_at = NOW() WHERE user_id = $1 AND token_hash <> $2 AND revoked_at IS NULL',
       [sesion.usuario.id, resumen(tokenActual)]);
     await evento(null, 'clave_cambiada', { userId: sesion.usuario.id, businessId: sesion.negocio.id, ip });
+  }
+
+  /* ---------------- VERIFICACIÓN DE CORREO ---------------- */
+  async function crearVerificacion(cliente, userId) {
+    const token = tokenAleatorio();
+    await cliente.query('UPDATE email_verifications SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL', [userId]);
+    await cliente.query(
+      `INSERT INTO email_verifications (token_hash, user_id, expires_at) VALUES ($1, $2, NOW() + interval '24 hours')`,
+      [resumen(token), userId]);
+    return token;
+  }
+
+  async function enviarVerificacion(correo, nombre, token) {
+    const enlace = `${urlBase()}/acceso.html#verificar=${token}`;
+    await enviarCorreo({
+      para: correo,
+      asunto: 'Confirma tu correo en Master Reservas',
+      texto: `Hola ${nombre || ''}:\n\nConfirma tu correo para activar tu cuenta (enlace válido 24 horas):\n${enlace}\n\nSi no creaste esta cuenta, ignora este mensaje.`,
+      enlace
+    });
+  }
+
+  async function confirmarCorreo(token, { ip } = {}) {
+    limitar('verificar', ip);
+    const r = await pool.query(
+      `UPDATE email_verifications SET used_at = NOW()
+       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW() RETURNING user_id`,
+      [resumen(String(token || ''))]);
+    if (!r.rowCount) throw new ErrorAuth(400, 'ENLACE_INVALIDO', 'El enlace no es válido o ya venció. Pide uno nuevo.');
+    await pool.query('UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW() WHERE id = $1', [r.rows[0].user_id]);
+    await evento(null, 'correo_verificado', { userId: r.rows[0].user_id, ip });
+  }
+
+  /* Misma respuesta exista o no la cuenta. */
+  async function reenviarVerificacion(email, { ip } = {}) {
+    limitar('reenviar-verificacion', ip);
+    const correo = normalizarCorreo(email);
+    if (!CORREO.test(correo)) return;
+    const u = (await pool.query(
+      `SELECT id, email, name FROM users WHERE lower(email) = $1 AND email_verified_at IS NULL AND status = 'active'`,
+      [correo])).rows[0];
+    if (!u) return;
+    const token = await crearVerificacion(pool, u.id);
+    await enviarVerificacion(u.email, u.name, token);
+    await evento(null, 'verificacion_reenviada', { userId: u.id, ip });
+  }
+
+  /* ---------------- VERIFICACIÓN EN DOS PASOS ---------------- */
+  function exigirDosPasosDisponible() {
+    if (!claveDosPasos) {
+      throw new ErrorAuth(503, 'DOS_PASOS_NO_DISPONIBLE', 'La verificación en dos pasos todavía no está habilitada en este servidor');
+    }
+  }
+
+  async function estadoDosPasos(sesion) {
+    const u = (await pool.query('SELECT totp_enabled_at FROM users WHERE id = $1', [sesion.usuario.id])).rows[0];
+    const r = await pool.query(
+      'SELECT count(*)::int AS n FROM totp_recovery_codes WHERE user_id = $1 AND used_at IS NULL', [sesion.usuario.id]);
+    return { available: Boolean(claveDosPasos), enabled: Boolean(u?.totp_enabled_at), recoveryCodesLeft: r.rows[0].n };
+  }
+
+  async function iniciarDosPasos(sesion, { ip } = {}) {
+    exigirDosPasosDisponible();
+    limitar('dos-pasos', ip);
+    const u = (await pool.query('SELECT email, totp_enabled_at FROM users WHERE id = $1', [sesion.usuario.id])).rows[0];
+    if (u.totp_enabled_at) throw new ErrorAuth(409, 'DOS_PASOS_ACTIVO', 'La verificación en dos pasos ya está activada');
+    const secreto = crypto.randomBytes(20);
+    await pool.query('UPDATE users SET totp_pending_secret = $2 WHERE id = $1', [sesion.usuario.id, cifrar(claveDosPasos, secreto)]);
+    const clave = base32(secreto);
+    const etiqueta = encodeURIComponent(`${nombreServicio}:${u.email}`);
+    return {
+      secret: clave,
+      otpauthUrl: `otpauth://totp/${etiqueta}?secret=${clave}&issuer=${encodeURIComponent(nombreServicio)}&algorithm=SHA1&digits=6&period=30`
+    };
+  }
+
+  async function activarDosPasos(sesion, codigo, { ip } = {}) {
+    exigirDosPasosDisponible();
+    limitar('dos-pasos', ip);
+    const u = (await pool.query('SELECT totp_pending_secret, totp_enabled_at FROM users WHERE id = $1', [sesion.usuario.id])).rows[0];
+    if (u.totp_enabled_at) throw new ErrorAuth(409, 'DOS_PASOS_ACTIVO', 'La verificación en dos pasos ya está activada');
+    if (!u.totp_pending_secret) throw new ErrorAuth(400, 'SIN_CONFIGURAR', 'Primero genera la clave para tu aplicación');
+    const secreto = descifrar(claveDosPasos, u.totp_pending_secret);
+    const paso = pasoTotpValido(secreto, codigo);
+    if (paso === null) throw new ErrorAuth(400, 'CODIGO_INVALIDO', 'El código no es correcto. Revisa la hora del teléfono e inténtalo de nuevo.');
+    const codigos = Array.from({ length: 10 }, codigoRecuperacion);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE users SET totp_secret = totp_pending_secret, totp_pending_secret = NULL, totp_enabled_at = NOW(),
+                totp_last_step = $2, updated_at = NOW() WHERE id = $1`, [sesion.usuario.id, paso]);
+      await client.query('DELETE FROM totp_recovery_codes WHERE user_id = $1', [sesion.usuario.id]);
+      for (const c of codigos) {
+        await client.query('INSERT INTO totp_recovery_codes (code_hash, user_id) VALUES ($1, $2)', [resumen(c), sesion.usuario.id]);
+      }
+      await evento(client, 'dos_pasos_activado', { userId: sesion.usuario.id, businessId: sesion.negocio.id, ip });
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    return { recoveryCodes: codigos };
+  }
+
+  /* Comprueba un código de la aplicación o un código de recuperación (este último, de un solo uso). */
+  async function codigoDosPasosCorrecto(userId, codigo) {
+    const u = (await pool.query('SELECT totp_secret, totp_last_step FROM users WHERE id = $1', [userId])).rows[0];
+    if (!u?.totp_secret) return false;
+    const limpio = String(codigo || '').trim().toLowerCase();
+    if (/^[0-9a-f]{5}-[0-9a-f]{5}$/.test(limpio)) {
+      const r = await pool.query(
+        'UPDATE totp_recovery_codes SET used_at = NOW() WHERE code_hash = $1 AND user_id = $2 AND used_at IS NULL',
+        [resumen(limpio), userId]);
+      return r.rowCount === 1;
+    }
+    const paso = pasoTotpValido(descifrar(claveDosPasos, u.totp_secret), limpio);
+    if (paso === null) return false;
+    /* Un código ya usado no sirve otra vez (evita reutilizarlo si alguien lo ve). */
+    const r = await pool.query(
+      `UPDATE users SET totp_last_step = $2 WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2)`,
+      [userId, paso]);
+    return r.rowCount === 1;
+  }
+
+  async function completarDosPasos(desafio, codigo, { ip, userAgent } = {}) {
+    exigirDosPasosDisponible();
+    limitar('dos-pasos', ip);
+    const fila = (await pool.query(
+      `UPDATE login_challenges SET attempts = attempts + 1
+       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW() AND attempts < 5
+       RETURNING user_id, business_id`, [resumen(String(desafio || ''))])).rows[0];
+    if (!fila) throw new ErrorAuth(401, 'DESAFIO_INVALIDO', 'El paso de verificación venció. Inicia sesión otra vez.');
+    if (!(await codigoDosPasosCorrecto(fila.user_id, codigo))) {
+      await evento(null, 'dos_pasos_fallido', { userId: fila.user_id, ip });
+      throw new ErrorAuth(401, 'CODIGO_INVALIDO', 'El código no es correcto');
+    }
+    await pool.query('UPDATE login_challenges SET used_at = NOW() WHERE token_hash = $1', [resumen(String(desafio))]);
+    const u = (await pool.query('SELECT * FROM users WHERE id = $1 AND status = \'active\'', [fila.user_id])).rows[0];
+    const elegido = (await negociosDeUsuario(fila.user_id)).find(n => n.id === fila.business_id);
+    if (!u || !elegido) throw new ErrorAuth(403, 'SIN_ACCESO', 'No tienes acceso a esa barbería');
+    return completarInicio(u, elegido, { ip, userAgent });
+  }
+
+  async function desactivarDosPasos(sesion, clave, codigo, { ip } = {}) {
+    exigirDosPasosDisponible();
+    limitar('dos-pasos', ip);
+    const u = (await pool.query('SELECT password_hash, totp_enabled_at FROM users WHERE id = $1', [sesion.usuario.id])).rows[0];
+    if (!u.totp_enabled_at) throw new ErrorAuth(409, 'DOS_PASOS_INACTIVO', 'La verificación en dos pasos no está activada');
+    if (!(await claveCorrecta(String(clave || ''), u.password_hash))) throw new ErrorAuth(400, 'CLAVE_ACTUAL', 'La contraseña no es correcta');
+    if (!(await codigoDosPasosCorrecto(sesion.usuario.id, codigo))) throw new ErrorAuth(400, 'CODIGO_INVALIDO', 'El código no es correcto');
+    await pool.query(
+      `UPDATE users SET totp_secret = NULL, totp_pending_secret = NULL, totp_enabled_at = NULL, totp_last_step = NULL,
+              updated_at = NOW() WHERE id = $1`, [sesion.usuario.id]);
+    await pool.query('DELETE FROM totp_recovery_codes WHERE user_id = $1', [sesion.usuario.id]);
+    await evento(null, 'dos_pasos_desactivado', { userId: sesion.usuario.id, businessId: sesion.negocio.id, ip });
   }
 
   /* ---------------- USUARIOS DE LA BARBERÍA ---------------- */
@@ -524,6 +798,14 @@ function crearAutenticacion({
   return {
     registrar,
     iniciarSesion,
+    confirmarCorreo,
+    reenviarVerificacion,
+    estadoDosPasos,
+    iniciarDosPasos,
+    activarDosPasos,
+    completarDosPasos,
+    desactivarDosPasos,
+    disponibleDosPasos: () => Boolean(claveDosPasos),
     leerSesion,
     cerrarSesion,
     solicitarRecuperacion,
@@ -539,6 +821,8 @@ function crearAutenticacion({
 
 module.exports = {
   crearAutenticacion,
+  codigoTotp,
+  desdeBase32,
   ErrorAuth,
   tienePermiso,
   permisosDe,

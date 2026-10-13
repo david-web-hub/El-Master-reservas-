@@ -94,8 +94,32 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
     <div class="aviso" id="aviso-login" role="alert"></div>
     <div class="enlaces">
       <a data-ir="recuperar">¿Olvidaste tu contraseña?</a>
-      <a data-ir="registro">Crear cuenta</a>
+      <a data-ir="registro" id="enlace-registro">Crear cuenta</a>
     </div>
+  </section>
+
+  <section class="card oculto" id="vista-pendiente">
+    <h1>Confirma tu correo</h1>
+    <p class="sub" id="pendiente-texto">Te enviamos un enlace para activar tu cuenta. Revisa tu bandeja de entrada y la carpeta de correo no deseado.</p>
+    <form id="form-reenviar">
+      <label for="pen-email">Correo</label>
+      <input class="input" id="pen-email" type="email" autocomplete="email" required maxlength="254">
+      <button class="btn" type="submit">Enviar otro enlace</button>
+    </form>
+    <div class="aviso" id="aviso-pendiente" role="alert"></div>
+    <div class="enlaces"><a data-ir="login">Ir a iniciar sesión</a></div>
+  </section>
+
+  <section class="card oculto" id="vista-dospasos">
+    <h1>Verificación en dos pasos</h1>
+    <p class="sub">Escribe el código de 6 dígitos de tu aplicación de autenticación. Si no tienes el teléfono, usa uno de tus códigos de recuperación.</p>
+    <form id="form-dospasos" autocomplete="off">
+      <label for="dp-codigo">Código</label>
+      <input class="input" id="dp-codigo" inputmode="numeric" autocomplete="one-time-code" required maxlength="11">
+      <button class="btn" type="submit">Verificar</button>
+    </form>
+    <div class="aviso" id="aviso-dospasos" role="alert"></div>
+    <div class="enlaces"><a data-ir="login">Volver</a></div>
   </section>
 
   <section class="card oculto" id="vista-registro">
@@ -167,7 +191,7 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
-  const vistas = ['login', 'registro', 'recuperar', 'restablecer'];
+  const vistas = ['login', 'registro', 'recuperar', 'restablecer', 'pendiente', 'dospasos'];
   let tokenRestablecer = null;
 
   function ir(vista) {
@@ -208,6 +232,17 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
     try {
       const r = await enviar('/api/auth/login', datos);
       if (r.status === 200) return location.replace('/admin.html');
+      if (r.status === 202 && r.json.twoFactorRequired) {
+        ir('dospasos');
+        $('dp-codigo').focus();
+        return;
+      }
+      if (r.status === 403 && r.json.code === 'CORREO_NO_VERIFICADO') {
+        $('pen-email').value = datos.email;
+        ir('pendiente');
+        aviso('pendiente', r.json.error);
+        return;
+      }
       if (r.status === 409 && r.json.businesses) {
         const sel = $('login-barberia');
         sel.innerHTML = '';
@@ -241,6 +276,14 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
         phone: $('reg-telefono').value,
         country, currency, timezone
       });
+      if (r.status === 201 && r.json.verificationRequired) {
+        $('pen-email').value = $('reg-email').value;
+        $('pendiente-texto').textContent =
+          'Te enviamos un enlace a ' + $('reg-email').value + ' para activar tu cuenta. Revisa tu bandeja de entrada y la carpeta de correo no deseado.';
+        form.reset();
+        ir('pendiente');
+        return;
+      }
       if (r.status === 201) return location.replace('/admin.html');
       aviso('registro', r.json.error || 'No se pudo crear la cuenta');
     } catch (err) {
@@ -280,19 +323,79 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
     }
   });
 
-  /* El enlace de recuperación trae el código después de "#", que nunca se envía al servidor en la URL. */
-  const m = /restablecer=([A-Za-z0-9_-]{20,100})/.exec(location.hash);
-  if (m) {
-    tokenRestablecer = m[1];
-    history.replaceState(null, '', location.pathname);
-    ir('restablecer');
-  } else if (location.hash === '#registro') {
-    ir('registro');
-  } else {
-    fetch('/api/auth/sesion', { credentials: 'same-origin' })
-      .then(r => { if (r.ok) location.replace('/admin.html'); })
-      .catch(() => {});
+  $('form-reenviar').addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    ocupado(form, true);
+    try {
+      const r = await enviar('/api/auth/verificacion/reenviar', { email: $('pen-email').value });
+      aviso('pendiente', r.json.message || r.json.error || 'Revisa tu correo.', r.status === 200);
+    } catch (err) {
+      aviso('pendiente', 'No hay conexión. Inténtalo de nuevo.');
+    } finally {
+      ocupado(form, false);
+    }
+  });
+
+  $('form-dospasos').addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    ocupado(form, true);
+    try {
+      const r = await enviar('/api/auth/2fa/verificar', { code: $('dp-codigo').value.trim() });
+      if (r.status === 200) return location.replace('/admin.html');
+      aviso('dospasos', r.json.error || 'El código no es correcto');
+      if (r.json.code === 'DESAFIO_INVALIDO') setTimeout(() => ir('login'), 1800);
+    } catch (err) {
+      aviso('dospasos', 'No hay conexión. Inténtalo de nuevo.');
+    } finally {
+      ocupado(form, false);
+    }
+  });
+
+  /* El registro solo aparece si está abierto en este servidor. */
+  fetch('/api/auth/config', { credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(c => {
+      if (!c.registrationOpen) {
+        $('enlace-registro').style.display = 'none';
+        if (!$('vista-registro').classList.contains('oculto')) ir('login');
+      }
+    })
+    .catch(() => {});
+
+  /*
+    Enlaces de los correos: el código llega después de "#" (no viaja al
+    servidor en la URL). Se atiende al cargar y también si la página ya
+    estaba abierta y solo cambia el "#".
+  */
+  function procesarEnlace(inicial) {
+    const v = /verificar=([A-Za-z0-9_-]{20,100})/.exec(location.hash);
+    const m = /restablecer=([A-Za-z0-9_-]{20,100})/.exec(location.hash);
+    if (v) {
+      history.replaceState(null, '', location.pathname);
+      ir('login');
+      enviar('/api/auth/verificar', { token: v[1] })
+        .then(r => aviso('login', r.json.message || r.json.error || 'No se pudo confirmar el correo', r.status === 200))
+        .catch(() => aviso('login', 'No hay conexión. Inténtalo de nuevo.'));
+    } else if (m) {
+      tokenRestablecer = m[1];
+      history.replaceState(null, '', location.pathname);
+      ir('restablecer');
+    } else if (location.hash === '#registro') {
+      ir('registro');
+    } else if (inicial && /[?&]sesion=vencida/.test(location.search)) {
+      history.replaceState(null, '', location.pathname);
+      aviso('login', 'Tu sesión terminó. Inicia sesión de nuevo para continuar.');
+    } else if (inicial) {
+      fetch('/api/auth/sesion', { credentials: 'same-origin' })
+        .then(r => { if (r.ok) location.replace('/admin.html'); })
+        .catch(() => {});
+    }
   }
+
+  window.addEventListener('hashchange', () => procesarEnlace(false));
+  procesarEnlace(true);
 })();
 </script>
 </body>

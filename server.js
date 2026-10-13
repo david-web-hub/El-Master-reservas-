@@ -48,6 +48,32 @@ const MODO_ALMACEN =
     : 'archivo';
 
 
+/* Render define RENDER=true en sus servicios; NODE_ENV=production en otros hostings. */
+function esProduccion() {
+
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env.RENDER === 'true'
+  );
+
+}
+
+
+/*
+  Registro de nuevas barberías: abierto en desarrollo y pruebas,
+  cerrado en producción salvo que REGISTRO_ABIERTO=1.
+  REGISTRO_ABIERTO=0 lo cierra en cualquier entorno.
+*/
+function registroAbierto() {
+
+  if (process.env.REGISTRO_ABIERTO === '1') return true;
+  if (process.env.REGISTRO_ABIERTO === '0') return false;
+
+  return !esProduccion();
+
+}
+
+
 /* =========================================================
    POSTGRESQL
 ========================================================= */
@@ -129,7 +155,7 @@ const COOKIE_SESION = 'mr_sesion';
 const ADMIN_SIN_CLAVE_LOCAL =
   MODO_ALMACEN === 'archivo' &&
   process.env.ADMIN_SIN_CLAVE_LOCAL === '1' &&
-  process.env.NODE_ENV !== 'production';
+  !esProduccion();
 
 function leerCookie(req, nombre) {
 
@@ -851,7 +877,7 @@ async function enviarCorreo({ para, asunto, texto, enlace }) {
   }
 
 
-  if (process.env.NODE_ENV === 'production') {
+  if (esProduccion()) {
 
     console.warn(
       'AVISO: correo no configurado; no se envió el mensaje de recuperación.'
@@ -876,9 +902,34 @@ function urlPublica() {
   }
 
   /* Solo en desarrollo se usa el host de la petición (evita enlaces a dominios falsos). */
-  return process.env.NODE_ENV === 'production'
+  return esProduccion()
     ? ''
     : (contextoNegocio.getStore()?.origen || '');
+
+}
+
+
+/*
+  Clave para cifrar los secretos de la verificación en dos pasos.
+  En producción debe definirse CLAVE_DOS_PASOS (no se inventa una);
+  sin ella, la función queda desactivada. En desarrollo y pruebas
+  se usa una clave local.
+*/
+function claveDosPasos() {
+
+  if (process.env.CLAVE_DOS_PASOS) {
+    return require('crypto')
+      .createHash('sha256')
+      .update(process.env.CLAVE_DOS_PASOS)
+      .digest();
+  }
+
+  if (esProduccion()) return null;
+
+  return require('crypto')
+    .createHash('sha256')
+    .update('solo-desarrollo-master-reservas')
+    .digest();
 
 }
 
@@ -891,7 +942,11 @@ const autenticacion =
         enviarCorreo,
         urlBase: urlPublica,
         limiteIp:
-          Number(process.env.AUTH_LIMITE_IP) || 30
+          Number(process.env.AUTH_LIMITE_IP) || 30,
+        verificarCorreo:
+          process.env.VERIFICAR_CORREO !== '0',
+        claveDosPasos:
+          claveDosPasos()
       })
     : null;
 
@@ -10922,6 +10977,7 @@ function descripcionSesion(sesion) {
     role: sesion.rol,
     roleName: NOMBRES_ROL[sesion.rol] || sesion.rol,
     barberId: sesion.barberId || null,
+    twoFactor: Boolean(sesion.dosPasos),
     permissions: [...permisosDe(sesion.rol)]
   };
 
@@ -10933,7 +10989,7 @@ app.post('/api/auth/registro', async (req, res) => {
 
   if (!requiereAutenticacion(res)) return;
 
-  if (process.env.REGISTRO_ABIERTO === '0') {
+  if (!registroAbierto()) {
     return res.status(403).json({ ok: false, error: 'El registro de nuevas barberías no está disponible' });
   }
 
@@ -10942,10 +10998,13 @@ app.post('/api/auth/registro', async (req, res) => {
     const r =
       await autenticacion.registrar(req.body || {}, datosCliente(req));
 
-    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+    if (r.token) {
+      escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+    }
 
     res.status(201).json({
       ok: true,
+      verificationRequired: r.verificacionPendiente,
       user: r.usuario,
       business: r.negocio,
       role: r.rol
@@ -10972,6 +11031,16 @@ app.post('/api/auth/login', async (req, res) => {
         { email: b.email, password: b.password, businessId: b.businessId },
         datosCliente(req)
       );
+
+    /* Falta el segundo paso: el desafío va en una cookie HttpOnly de 5 minutos. */
+    if (r.requiereDosPasos) {
+      res.append(
+        'Set-Cookie',
+        `${COOKIE_DOS_PASOS}=${encodeURIComponent(r.desafio)}; Path=/api/auth; HttpOnly; SameSite=Strict; Max-Age=300` +
+        (cookieSegura(req) ? '; Secure' : '')
+      );
+      return res.status(202).json({ ok: true, twoFactorRequired: true });
+    }
 
     /* Una sesión anterior en este navegador se cierra. */
     if (req.tokenSesion) {
@@ -11089,6 +11158,164 @@ app.post('/api/auth/cambiar-clave', async (req, res) => {
 
     responderErrorAuth(res, error, 'CAMBIANDO CONTRASEÑA');
 
+  }
+
+});
+
+
+const COOKIE_DOS_PASOS = 'mr_dos_pasos';
+
+/* Qué ofrece la pantalla de acceso (sin datos sensibles). */
+app.get('/api/auth/config', (req, res) => {
+
+  res.set('Cache-Control', 'no-store');
+
+  res.json({
+    ok: true,
+    accounts: Boolean(autenticacion),
+    registrationOpen: Boolean(autenticacion) && registroAbierto(),
+    emailVerification: process.env.VERIFICAR_CORREO !== '0',
+    twoFactorAvailable: Boolean(autenticacion && autenticacion.disponibleDosPasos())
+  });
+
+});
+
+app.post('/api/auth/verificar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    await autenticacion.confirmarCorreo(req.body?.token, datosCliente(req));
+
+    res.json({ ok: true, message: 'Correo confirmado. Ya puedes iniciar sesión.' });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'VERIFICANDO CORREO');
+
+  }
+
+});
+
+app.post('/api/auth/verificacion/reenviar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    await autenticacion.reenviarVerificacion(req.body?.email, datosCliente(req));
+
+  } catch (error) {
+
+    if (error instanceof ErrorAuth && error.status === 429) {
+      return responderErrorAuth(res, error, 'REENVIANDO VERIFICACIÓN');
+    }
+
+    console.error('ERROR REENVIANDO VERIFICACIÓN:', error.message);
+
+  }
+
+  res.json({
+    ok: true,
+    message: 'Si la cuenta está pendiente de confirmar, enviamos un nuevo enlace a ese correo.'
+  });
+
+});
+
+app.post('/api/auth/2fa/verificar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    const r =
+      await autenticacion.completarDosPasos(
+        leerCookie(req, COOKIE_DOS_PASOS), req.body?.code, datosCliente(req));
+
+    res.append('Set-Cookie', `${COOKIE_DOS_PASOS}=; Path=/api/auth; HttpOnly; SameSite=Strict; Max-Age=0`);
+
+    if (req.tokenSesion) {
+      await autenticacion.cerrarSesion(req.tokenSesion).catch(() => {});
+    }
+
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+
+    res.json({ ok: true, user: r.usuario, business: r.negocio, role: r.rol });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'VERIFICANDO SEGUNDO PASO');
+
+  }
+
+});
+
+/* Gestión de la verificación en dos pasos de la propia cuenta. */
+function sesionPropia(req, res) {
+
+  if (!requiereAutenticacion(res)) return null;
+
+  if (!req.sesion || req.sesion.local) {
+    res.status(401).json({ ok: false, error: 'Inicia sesión para continuar' });
+    return null;
+  }
+
+  return req.sesion;
+
+}
+
+app.get('/api/auth/2fa', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    res.json({ ok: true, ...(await autenticacion.estadoDosPasos(sesion)) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'CONSULTANDO DOS PASOS');
+  }
+
+});
+
+app.post('/api/auth/2fa/iniciar', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, ...(await autenticacion.iniciarDosPasos(sesion, datosCliente(req))) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'INICIANDO DOS PASOS');
+  }
+
+});
+
+app.post('/api/auth/2fa/activar', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, ...(await autenticacion.activarDosPasos(sesion, req.body?.code, datosCliente(req))) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'ACTIVANDO DOS PASOS');
+  }
+
+});
+
+app.post('/api/auth/2fa/desactivar', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    await autenticacion.desactivarDosPasos(sesion, req.body?.password, req.body?.code, datosCliente(req));
+    res.json({ ok: true });
+  } catch (error) {
+    responderErrorAuth(res, error, 'DESACTIVANDO DOS PASOS');
   }
 
 });

@@ -1346,6 +1346,15 @@ textarea {
 .hours-row{display:grid;grid-template-columns:110px 60px 1fr 1fr 1fr 1fr;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
 .preview-box{border:1px solid var(--line);border-radius:18px;padding:24px;text-align:center;max-width:420px}
 @media(max-width:780px){.hours-row{grid-template-columns:1fr 1fr}}
+/* ---------- Cuenta y sesión (fase 4) ---------- */
+.sidebar-account{position:absolute;left:14px;right:14px;bottom:22px;border-top:1px solid var(--line);padding-top:12px}
+.sidebar-account .who{padding:0 13px 8px;color:var(--muted);font-size:13px;overflow:hidden}
+.sidebar-account .who strong{display:block;color:var(--text);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-height:700px){.sidebar-account{position:static;margin-top:18px}}
+.account-block{margin-top:16px}
+.account-block h3{margin:0 0 4px}
+.secret-box{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;word-break:break-all;background:#0c1014;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}
+.user-avatar{font-weight:850;color:var(--gold2)}
 </style>
 </head>
 
@@ -1376,6 +1385,12 @@ textarea {
       class="menu"
       id="desktopNav">
     </nav>
+
+    <div
+      class="sidebar-account"
+      id="sidebarAccount"
+      hidden>
+    </div>
 
   </aside>
 
@@ -2425,6 +2440,16 @@ async function request(
 
   }
 
+  /* Sesión vencida o cerrada en otro dispositivo: volver al acceso. */
+  if (
+    response.status === 401 &&
+    !options.sinRedireccion
+  ) {
+
+    sesionVencida();
+
+  }
+
   if (!response.ok) {
 
     throw new Error(
@@ -2476,7 +2501,7 @@ function today() {
 function initNav() {
 
   $('desktopNav').innerHTML =
-    pages.map(
+    visiblePages().map(
       page => {
 
         const [
@@ -2516,7 +2541,7 @@ function initNav() {
 
 
   $('mobileNav').innerHTML =
-    pages.map(
+    visiblePages().map(
       page => {
 
         const [
@@ -2781,6 +2806,8 @@ function statusClass(
 
 async function loadAll() {
 
+  await loadSession();
+
   try {
 
     const config =
@@ -2823,15 +2850,10 @@ async function loadAll() {
 
 
   await Promise.allSettled([
-
     loadBookings(),
-
-    loadProducts(),
-
-    loadCash(),
-
+    can('productos.ver') ? loadProducts() : null,
+    can('caja') ? loadCash() : null,
     loadPaymentSettings()
-
   ]);
 
 
@@ -5491,6 +5513,20 @@ const settings = [
     '⌨',
     'Personalización avanzada',
     'Personalización avanzada de la página pública.'
+  ],
+
+  [
+    'cuenta',
+    '👤',
+    'Mi cuenta',
+    'Contraseña, verificación en dos pasos y sesión.'
+  ],
+
+  [
+    'usuarios',
+    '👥',
+    'Usuarios y roles',
+    'Accesos del equipo y permisos de cada persona.'
   ]
 
 ];
@@ -5500,7 +5536,12 @@ function renderSettings() {
 
   $('settingsHome')
     .innerHTML =
-      settings.map(
+      settings
+        .filter(
+          setting =>
+            settingAllowed(setting[0])
+        )
+        .map(
         setting => `
 
           <div
@@ -5591,6 +5632,20 @@ function openSetting(key) {
 
 
   currentSetting = null;
+
+
+  if (key === 'cuenta') {
+    renderAccountSettings();
+    return;
+  }
+
+  if (key === 'usuarios') {
+    $('settingContent').innerHTML =
+      '<div class="empty">Cargando…</div>';
+    loadUserSettings();
+    return;
+  }
+
 
   if (
     key ===
@@ -7907,6 +7962,389 @@ $('reportTo').value =
    INICIAR APLICACIÓN
 ========================================================= */
 
+
+/* =========================================================
+   SESIÓN, PERMISOS, MI CUENTA Y USUARIOS
+   Los permisos también los aplica el servidor: aquí solo se
+   ocultan las opciones que la cuenta no puede usar.
+========================================================= */
+
+let currentSession = null;
+let teamUsers = [];
+let redirigiendoAcceso = false;
+
+const ROLE_NAMES = {
+  owner: 'Propietario',
+  admin: 'Administrador',
+  staff: 'Recepción y caja',
+  barber: 'Barbero'
+};
+
+const ROLE_HELP = {
+  owner: 'Acceso total, incluida la gestión de usuarios.',
+  admin: 'Todo el negocio salvo agregar o cambiar usuarios.',
+  staff: 'Reservas, caja, ventas y clientes.',
+  barber: 'Solo sus propias reservas.'
+};
+
+const PAGE_PERMISSIONS = {
+  reservas: ['reservas', 'reservas.propias'],
+  caja: ['caja'],
+  productos: ['productos.ver'],
+  clientes: ['clientes'],
+  informes: ['informes']
+};
+
+function can(permission) {
+  if (!currentSession) return true;
+  const list = currentSession.permissions || [];
+  return list.includes('*') || list.includes(permission);
+}
+
+function visiblePages() {
+  return pages.filter(page =>
+    !PAGE_PERMISSIONS[page[0]] || PAGE_PERMISSIONS[page[0]].some(can));
+}
+
+function settingAllowed(key) {
+  if (key === 'usuarios') return Boolean(currentSession) && !currentSession.local && can('usuarios.ver');
+  if (key === 'cuenta') return true;
+  return can('configuracion') || (key === 'datos' && can('respaldo'));
+}
+
+function sesionVencida() {
+  if (redirigiendoAcceso) return;
+  redirigiendoAcceso = true;
+  location.replace('/acceso.html?sesion=vencida');
+}
+
+async function loadSession() {
+  try {
+    currentSession = await request('/api/auth/sesion');
+  } catch (error) {
+    currentSession = null;
+  }
+  renderSessionUi();
+}
+
+function renderSessionUi() {
+  const box = $('sidebarAccount');
+  if (!currentSession) {
+    box.hidden = true;
+    return;
+  }
+  const user = currentSession.user || {};
+  box.innerHTML = `
+    <div class="who">
+      <strong>${esc(user.name || user.email || '')}</strong>
+      ${esc(currentSession.roleName || ROLE_NAMES[currentSession.role] || '')}
+    </div>
+    ${currentSession.local ? '' : `
+    <button class="nav-btn" id="logoutBtn" onclick="logout()">
+      <span class="nav-icon">⏻</span>
+      Cerrar sesión
+    </button>`}
+  `;
+  box.hidden = false;
+
+  const active = document.querySelector('.section.active')?.id || 'inicio';
+  initNav();
+  if (!visiblePages().some(page => page[0] === active)) {
+    goTo('inicio');
+  } else {
+    document.querySelectorAll('[data-page]').forEach(button =>
+      button.classList.toggle('active', button.dataset.page === active));
+  }
+  renderSettings();
+}
+
+async function logout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (error) {
+    console.error(error);
+  }
+  redirigiendoAcceso = true;
+  location.replace('/acceso.html');
+}
+
+/* ---------- Mi cuenta ---------- */
+async function renderAccountSettings() {
+  const user = currentSession?.user || {};
+  const local = !currentSession || currentSession.local;
+  let twoFactor = { available: false, enabled: false, recoveryCodesLeft: 0 };
+  if (!local) {
+    try {
+      twoFactor = await request('/api/auth/2fa');
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  $('settingContent').innerHTML = `
+    <div class="form-grid">
+      <div class="field"><label>Nombre</label>
+        <input class="input" value="${esc(user.name || '')}" disabled></div>
+      <div class="field"><label>Correo</label>
+        <input class="input" value="${esc(user.email || '')}" disabled></div>
+      <div class="field"><label>Rol</label>
+        <input class="input" value="${esc(currentSession?.roleName || '')}" disabled></div>
+      <div class="field"><label>Barbería</label>
+        <input class="input" value="${esc(currentSession?.business?.name || '')}" disabled></div>
+    </div>
+
+    ${local ? '<p class="label">Modo local sin PostgreSQL: las cuentas no están disponibles.</p>' : `
+    <div class="card account-block">
+      <h3>Cambiar contraseña</h3>
+      <p class="label">Al cambiarla se cierran tus sesiones en otros dispositivos.</p>
+      <div class="form-grid">
+        <div class="field"><label>Contraseña actual</label>
+          <input class="input" id="accCurrent" type="password" autocomplete="current-password"></div>
+        <div class="field"><label>Nueva contraseña</label>
+          <input class="input" id="accNew" type="password" autocomplete="new-password" minlength="10"></div>
+        <div class="field"><label>Repite la nueva contraseña</label>
+          <input class="input" id="accNew2" type="password" autocomplete="new-password" minlength="10"></div>
+      </div>
+      <button class="btn btn-gold" style="margin-top:16px" id="accPasswordBtn" onclick="changePassword()">Actualizar contraseña</button>
+    </div>
+
+    <div class="card account-block">
+      <h3>Verificación en dos pasos
+        <span class="badge ${twoFactor.enabled ? 'badge-green' : 'badge-gold'}">${twoFactor.enabled ? 'Activada' : 'Opcional'}</span></h3>
+      <p class="label">Además de la contraseña, pide un código de 6 dígitos de una aplicación como Google Authenticator.</p>
+      <div id="twoFactorBox">${twoFactorHtml(twoFactor)}</div>
+    </div>
+
+    <div class="card account-block">
+      <h3>Sesión</h3>
+      <p class="label">Cierra la sesión en este dispositivo.</p>
+      <button class="btn btn-danger" style="margin-top:12px" onclick="logout()">Cerrar sesión</button>
+    </div>`}
+  `;
+}
+
+function twoFactorHtml(state) {
+  if (!state.available) {
+    return '<p class="label">Todavía no está habilitada en este servidor.</p>';
+  }
+  if (state.enabled) {
+    return `
+      <p class="label">Códigos de recuperación disponibles: ${Number(state.recoveryCodesLeft) || 0}</p>
+      <div class="form-grid">
+        <div class="field"><label>Contraseña</label>
+          <input class="input" id="tfOffPassword" type="password" autocomplete="current-password"></div>
+        <div class="field"><label>Código de la aplicación o de recuperación</label>
+          <input class="input" id="tfOffCode" autocomplete="one-time-code"></div>
+      </div>
+      <button class="btn btn-danger" style="margin-top:16px" onclick="disableTwoFactor()">Desactivar</button>`;
+  }
+  return `<button class="btn btn-gold" style="margin-top:12px" onclick="startTwoFactor()">Activar verificación en dos pasos</button>`;
+}
+
+async function changePassword() {
+  const current = $('accCurrent').value;
+  const next = $('accNew').value;
+  if (!current || !next) return toast('Completa las contraseñas.', true);
+  if (next !== $('accNew2').value) return toast('Las contraseñas nuevas no coinciden.', true);
+  const button = $('accPasswordBtn');
+  button.disabled = true;
+  try {
+    await request('/api/auth/cambiar-clave', {
+      method: 'POST', headers: JSON_HEADERS,
+      body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      sinRedireccion: true
+    });
+    ['accCurrent', 'accNew', 'accNew2'].forEach(id => { $(id).value = ''; });
+    toast('Contraseña actualizada.');
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function startTwoFactor() {
+  try {
+    const data = await request('/api/auth/2fa/iniciar', { method: 'POST', headers: JSON_HEADERS, body: '{}' });
+    $('twoFactorBox').innerHTML = `
+      <p class="label">1. En tu aplicación de autenticación agrega una cuenta con esta clave
+        (o ábrela desde el teléfono con el enlace).</p>
+      <div class="secret-box" id="tfSecret">${esc(data.secret.replace(/(.{4})/g, '$1 ').trim())}</div>
+      <div class="toolbar"><a class="btn btn-dark" style="text-decoration:none;display:inline-block" href="${esc(data.otpauthUrl)}">Abrir en la aplicación</a></div>
+      <div class="form-grid" style="margin-top:12px">
+        <div class="field"><label>2. Escribe el código de 6 dígitos que muestra la aplicación</label>
+          <input class="input" id="tfCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>
+      </div>
+      <button class="btn btn-gold" style="margin-top:16px" onclick="confirmTwoFactor()">Confirmar y activar</button>`;
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function confirmTwoFactor() {
+  try {
+    const data = await request('/api/auth/2fa/activar', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ code: val('tfCode') })
+    });
+    currentSession.twoFactor = true;
+    $('twoFactorBox').innerHTML = `
+      <p class="label">Verificación activada. Guarda estos códigos de recuperación en un lugar seguro:
+        cada uno sirve una sola vez si pierdes el teléfono. No se volverán a mostrar.</p>
+      <div class="chips" id="tfRecovery">${data.recoveryCodes.map(code => `<span class="chip">${esc(code)}</span>`).join('')}</div>
+      <button class="btn btn-dark" style="margin-top:12px" onclick="renderAccountSettings()">Listo</button>`;
+    toast('Verificación en dos pasos activada.');
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function disableTwoFactor() {
+  try {
+    await request('/api/auth/2fa/desactivar', {
+      method: 'POST', headers: JSON_HEADERS,
+      body: JSON.stringify({ password: $('tfOffPassword').value, code: val('tfOffCode') })
+    });
+    toast('Verificación en dos pasos desactivada.');
+    renderAccountSettings();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+/* ---------- Usuarios y roles ---------- */
+async function loadUserSettings() {
+  try {
+    const [usersData, barbersData] = await Promise.all([
+      request('/api/admin/usuarios'),
+      request(API.barbers)
+    ]);
+    teamUsers = usersData.users || [];
+    allBarbers = barbersData.barbers || [];
+    renderUserSettings();
+  } catch (error) {
+    $('settingContent').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+
+function renderUserSettings() {
+  const manage = can('usuarios');
+  const me = currentSession?.user?.id;
+  const cards = teamUsers.map(user => {
+    const barber = allBarbers.find(item => item.id === user.barberId);
+    const active = user.status === 'active';
+    return `
+      <div class="barber-card">
+        <div class="thumb user-avatar">${esc((user.name || user.email || '?').trim().charAt(0).toUpperCase())}</div>
+        <div style="flex:1;min-width:0">
+          <strong>${esc(user.name || user.email)}</strong>
+          <span class="badge badge-gold">${esc(ROLE_NAMES[user.role] || user.role)}</span>
+          <span class="badge ${active ? 'badge-green' : 'badge-red'}">${active ? 'Activo' : 'Desactivado'}</span>
+          <div class="label">${esc(user.email)}${user.id === me ? ' · Tú' : ''}</div>
+          ${barber ? `<div class="label">Barbero: ${esc(barber.name)}</div>` : ''}
+          <div class="label">${user.lastLoginAt ? 'Último acceso: ' + esc(new Date(user.lastLoginAt).toLocaleString('es-EC')) : 'Aún no ha iniciado sesión'}</div>
+          ${manage && user.id !== me ? `
+          <div class="actions">
+            <button class="btn btn-dark" onclick="openUserModal('${esc(user.id)}')">Cambiar rol</button>
+            <button class="btn ${active ? 'btn-danger' : 'btn-success'}" onclick="toggleUser('${esc(user.id)}')">
+              ${active ? 'Desactivar' : 'Activar'}</button>
+          </div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  $('settingContent').innerHTML = `
+    ${manage ? `
+    <div class="toolbar" style="justify-content:flex-end;margin-bottom:8px">
+      <button class="btn btn-gold" onclick="openUserModal()">+ Agregar usuario</button>
+    </div>` : '<p class="label">Solo un propietario puede agregar o cambiar usuarios.</p>'}
+    ${cards || '<div class="empty">Todavía no hay usuarios.</div>'}
+    <div class="chips" style="margin-top:14px">
+      ${Object.keys(ROLE_NAMES).map(role => `<span class="chip"><strong>${ROLE_NAMES[role]}:</strong> ${ROLE_HELP[role]}</span>`).join('')}
+    </div>
+    <p class="label">Los usuarios no se eliminan: se desactivan y pierden el acceso de inmediato.</p>
+  `;
+}
+
+function roleOptions(selected) {
+  const roles = currentSession?.role === 'owner' ? ['admin', 'staff', 'barber', 'owner'] : ['admin', 'staff', 'barber'];
+  return roles.map(role =>
+    `<option value="${role}" ${role === selected ? 'selected' : ''}>${ROLE_NAMES[role]}</option>`).join('');
+}
+
+function barberOptions(selected) {
+  return allBarbers.filter(item => item.active !== false).map(item =>
+    `<option value="${esc(item.id)}" ${item.id === selected ? 'selected' : ''}>${esc(item.name)}</option>`).join('');
+}
+
+function toggleBarberField() {
+  $('usBarberField').style.display = $('usRole').value === 'barber' ? '' : 'none';
+}
+
+function openUserModal(id = null) {
+  const user = teamUsers.find(item => item.id === id) || {};
+  $('modalTitle').textContent = id ? 'Cambiar rol' : 'Agregar usuario';
+  $('modalContent').innerHTML = `
+    <div class="form-grid">
+      ${id ? `
+      <div class="field" style="grid-column:1/-1"><label>Usuario</label>
+        <input class="input" value="${esc(user.name || user.email)}" disabled></div>` : `
+      <div class="field"><label>Correo *</label>
+        <input class="input" id="usEmail" type="email" maxlength="254"></div>
+      <div class="field"><label>Nombre</label>
+        <input class="input" id="usName" maxlength="120"></div>`}
+      <div class="field"><label>Rol *</label>
+        <select class="select" id="usRole" onchange="toggleBarberField()">${roleOptions(user.role || 'staff')}</select></div>
+      <div class="field" id="usBarberField"><label>Barbero de esta cuenta</label>
+        <select class="select" id="usBarber">${barberOptions(user.barberId)}</select></div>
+    </div>
+    ${id ? '' : '<p class="label">Recibirá un correo con un enlace para crear su contraseña.</p>'}
+    <button class="btn btn-gold" id="saveUserBtn" style="width:100%;margin-top:14px"
+      onclick="saveUser('${esc(id || '')}')">${id ? 'Guardar cambios' : 'Enviar invitación'}</button>
+  `;
+  toggleBarberField();
+  $('modalBack').classList.add('show');
+}
+
+async function saveUser(id) {
+  const role = $('usRole').value;
+  const body = { role, barberId: role === 'barber' ? $('usBarber').value : null };
+  if (!id) {
+    body.email = val('usEmail');
+    body.name = val('usName');
+    if (!body.email) return toast('Escribe el correo.', true);
+  }
+  const button = $('saveUserBtn');
+  button.disabled = true;
+  try {
+    await request(id ? `/api/admin/usuarios/${encodeURIComponent(id)}` : '/api/admin/usuarios', {
+      method: id ? 'PATCH' : 'POST', headers: JSON_HEADERS, body: JSON.stringify(body)
+    });
+    closeModal();
+    toast(id ? 'Rol actualizado.' : 'Invitación enviada.');
+    await loadUserSettings();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function toggleUser(id) {
+  const user = teamUsers.find(item => item.id === id);
+  if (!user) return;
+  try {
+    await request(`/api/admin/usuarios/${encodeURIComponent(id)}`, {
+      method: 'PATCH', headers: JSON_HEADERS,
+      body: JSON.stringify({ status: user.status === 'active' ? 'disabled' : 'active' })
+    });
+    toast(user.status === 'active' ? 'Usuario desactivado.' : 'Usuario activado.');
+    await loadUserSettings();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+
 initNav();
 
 renderSettings();
@@ -7922,11 +8360,8 @@ loadAll();
 
 setInterval(
   () => {
-
     loadBookings();
-
-    loadCash();
-
+    if (can('caja')) loadCash();
   },
   60000
 );
