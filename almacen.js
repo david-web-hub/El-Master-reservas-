@@ -178,7 +178,53 @@ const MIGRACIONES = [
   }
 ];
 
+MIGRACIONES.push({
+  version: '2026-10-fase2-001',
+  descripcion: 'Registro de barberías para cuentas propias y eventos para el Panel Maestro',
+  sql: `
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS plan TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS contact_email TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS contact_phone TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'importacion';
+
+    /* Bandeja de salida: cada evento se entregará al Panel Maestro (fase 6). */
+    CREATE TABLE IF NOT EXISTS platform_events (
+      id BIGSERIAL PRIMARY KEY,
+      business_id TEXT NOT NULL REFERENCES businesses(id),
+      type TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      delivered_at TIMESTAMPTZ,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS platform_events_pending_idx
+      ON platform_events (created_at) WHERE delivered_at IS NULL;
+
+    /* Las barberías que ya existen también se anunciarán al Panel Maestro. */
+    INSERT INTO platform_events (business_id, type, payload)
+    SELECT b.id, 'business.created',
+           jsonb_build_object('id', b.id, 'slug', b.slug, 'name', b.name, 'country', b.country,
+                              'currency', b.currency, 'locale', b.locale, 'timezone', b.timezone,
+                              'status', b.status, 'createdAt', b.created_at)
+    FROM businesses b
+    WHERE NOT EXISTS (
+      SELECT 1 FROM platform_events e WHERE e.business_id = b.id AND e.type = 'business.created'
+    );
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
+const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
+
+function payloadNegocio(b) {
+  return {
+    id: b.id, slug: b.slug, name: b.name, country: b.country, currency: b.currency,
+    locale: b.locale, timezone: b.timezone, status: b.status, plan: b.plan || null,
+    createdAt: b.created_at
+  };
+}
 
 /* =========================================================
    CREAR ALMACÉN
@@ -336,10 +382,15 @@ function crearAlmacen(opciones) {
     const resumen = { barbers: 0, services: 0, bookings: 0, state: 0, conservados: 0, actualizados: 0, conflictos: [] };
 
     const n = datosNegocio(db, id);
-    await client.query(
+    const creada = await client.query(
       `INSERT INTO businesses (id, slug, name, country, currency, locale, timezone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING RETURNING *`,
       [n.id, n.slug, n.name, n.country, n.currency, n.locale, n.timezone]);
+    if (creada.rowCount) {
+      await client.query(
+        `INSERT INTO platform_events (business_id, type, payload) VALUES ($1, 'business.created', $2::jsonb)`,
+        [id, JSON.stringify(payloadNegocio(creada.rows[0]))]);
+    }
 
     for (const [key, data] of Object.entries(db)) {
       if (COLECCIONES.includes(key) || data === undefined) continue;
@@ -822,6 +873,70 @@ function crearAlmacen(opciones) {
     if (!cache.has(id)) await cargar(id);
   }
 
+  /*
+    Crea una barbería nueva con su propia agenda vacía (sin barberos ni
+    reservas) y el catálogo de servicios de ejemplo. Lo usará el
+    registro de cuentas (fase 3). No se expone todavía por HTTP.
+  */
+  async function crearNegocio(datos = {}) {
+    if (modo !== 'postgres') throw new ErrorAlmacen('SOLO_POSTGRES', 'Crear barberías requiere PostgreSQL');
+    const id = validarNegocio(String(datos.id || '').trim().toLowerCase());
+    const slug = String(datos.slug || id).trim().toLowerCase();
+    if (!SLUG.test(slug)) throw new ErrorAlmacen('SLUG_INVALIDO', `Dirección pública no válida: ${slug}`);
+    const nombre = texto(String(datos.name || '').trim(), 120);
+    if (!nombre) throw new ErrorAlmacen('NOMBRE_REQUERIDO', 'Escribe el nombre de la barbería');
+
+    const base = normalizar(datosIniciales());
+    const db = {
+      business: { ...(base.business || {}), id, name: nombre, phone: texto(datos.phone, 30) || '', address: '', description: '' },
+      schedule: base.schedule,
+      settings: base.settings,
+      barbers: [],
+      services: base.services || [],
+      bookings: []
+    };
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['master-reservas:negocio:' + id]);
+      const existe = await client.query('SELECT 1 FROM businesses WHERE id = $1 OR slug = $2', [id, slug]);
+      if (existe.rowCount) throw new ErrorAlmacen('NEGOCIO_EXISTE', `Ya existe una barbería con id o dirección "${slug}"`);
+      const r = await client.query(
+        `INSERT INTO businesses (id, slug, name, country, currency, locale, timezone, status, plan,
+                                 trial_ends_at, contact_email, contact_phone, origin)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'registro') RETURNING *`,
+        [id, slug, nombre,
+          texto(datos.country, 2) || 'EC', texto(datos.currency, 3) || 'USD',
+          texto(datos.locale, 20) || 'es-EC', texto(datos.timezone, 64) || 'America/Guayaquil',
+          datos.status === 'active' ? 'active' : 'trial', texto(datos.plan, 60),
+          datos.trialEndsAt || null, texto(datos.contactEmail, 160), texto(datos.contactPhone, 40)]);
+      await insertarTodo(client, id, db, 'registro');
+      await client.query(
+        `INSERT INTO platform_events (business_id, type, payload) VALUES ($1, 'business.created', $2::jsonb)`,
+        [id, JSON.stringify(payloadNegocio(r.rows[0]))]);
+      await client.query('COMMIT');
+      return payloadNegocio(r.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (error.code === '23505') throw new ErrorAlmacen('NEGOCIO_EXISTE', 'Ya existe una barbería con ese id o dirección');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /* Lista de barberías para el Panel Maestro (fase 6). Solo lectura. */
+  async function listarNegocios() {
+    if (modo !== 'postgres') return [];
+    const r = await pool.query(
+      `SELECT b.*,
+              (SELECT count(*) FROM barbers x WHERE x.business_id = b.id)::int AS barbers,
+              (SELECT count(*) FROM bookings x WHERE x.business_id = b.id)::int AS bookings
+       FROM businesses b ORDER BY b.created_at, b.id`);
+    return r.rows.map(b => ({ ...payloadNegocio(b), barbers: b.barbers, bookings: b.bookings }));
+  }
+
   function info() {
     return {
       modo,
@@ -838,6 +953,8 @@ function crearAlmacen(opciones) {
     guardar,
     recargar,
     cargarNegocio,
+    crearNegocio,
+    listarNegocios,
     info,
     /* Uso interno de los scripts de migración. */
     _insertarTodo: insertarTodo,

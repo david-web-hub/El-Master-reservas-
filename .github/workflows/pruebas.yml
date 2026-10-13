@@ -38,7 +38,7 @@ jobs:
             sudo -u postgres psql -c "ALTER SYSTEM SET ssl = on"
             sudo systemctl restart postgresql.service
           fi
-          sudo -u postgres psql -c "CREATE USER prueba WITH PASSWORD 'solo_para_pruebas'"
+          sudo -u postgres psql -c "CREATE USER prueba WITH PASSWORD 'solo_para_pruebas' CREATEDB"
           sudo -u postgres createdb -O prueba reservas_test
           sudo -u postgres psql -Atc 'SHOW ssl'
 
@@ -74,7 +74,7 @@ jobs:
       - name: Preparar PostgreSQL de pruebas
         run: |
           sudo systemctl start postgresql.service
-          sudo -u postgres psql -c "CREATE USER prueba WITH PASSWORD 'solo_para_pruebas'"
+          sudo -u postgres psql -c "CREATE USER prueba WITH PASSWORD 'solo_para_pruebas' CREATEDB"
 
       - name: Instalar dependencias y Chromium
         run: |

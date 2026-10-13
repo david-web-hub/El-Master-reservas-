@@ -56,7 +56,7 @@ async function identificar() {
     }
     await client.query('ROLLBACK');
     const conocidas = {
-      masterReservas: ['sales', 'cash_sessions', 'products', 'admin_settings', 'media_assets'],
+      masterReservas: ['sales', 'cash_sessions', 'products', 'admin_settings', 'media_assets', 'businesses', 'bookings', 'barbers', 'services'],
       panelMaestro: ['master_fade_plans', 'master_fade_plan_changes']
     };
     const nombres = new Set(tablas.map(t => t.tabla));

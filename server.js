@@ -7,6 +7,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const { Pool } = require('pg');
+const { AsyncLocalStorage } = require('node:async_hooks');
 
 const app = express();
 
@@ -111,6 +112,60 @@ app.use(
       'public'
     )
   )
+);
+
+
+/* =========================================================
+   BARBERÍA DE CADA PETICIÓN
+   Todas las consultas usan negocioActual(). Por ahora todas
+   las peticiones pertenecen a la barbería principal; cuando
+   existan cuentas (inicio de sesión), resolverNegocio() la
+   obtendrá de la sesión, nunca de un dato que envíe el
+   navegador sin verificar.
+========================================================= */
+
+const contextoNegocio =
+  new AsyncLocalStorage();
+
+function negocioActual() {
+
+  return (
+    contextoNegocio.getStore()?.negocio ||
+    DEFAULT_BUSINESS_ID
+  );
+
+}
+
+function resolverNegocio(req) {
+
+  return DEFAULT_BUSINESS_ID;
+
+}
+
+app.use(
+  async (req, res, next) => {
+
+    try {
+
+      const negocio =
+        resolverNegocio(req);
+
+      await almacen.cargarNegocio(
+        negocio
+      );
+
+      contextoNegocio.run(
+        { negocio },
+        next
+      );
+
+    } catch (error) {
+
+      next(error);
+
+    }
+
+  }
 );
 
 
@@ -412,14 +467,19 @@ const almacen =
 
 function readDb() {
 
-  return almacen.leer();
+  return almacen.leer(
+    negocioActual()
+  );
 
 }
 
 
 function writeDb(db) {
 
-  return almacen.guardar(db);
+  return almacen.guardar(
+    db,
+    negocioActual()
+  );
 
 }
 
@@ -1247,8 +1307,9 @@ app.get(
             created_at,
             updated_at
           FROM products
+          WHERE business_id = $1
           ORDER BY name ASC
-        `);
+        `, [negocioActual()]);
 
 
       const products =
@@ -1434,7 +1495,8 @@ app.post(
   stock,
   min_stock,
   active,
-  image_url
+  image_url,
+  business_id
 )
             VALUES (
               $1,
@@ -1444,7 +1506,8 @@ app.post(
               $5,
               $6,
               $7,
-              $8
+              $8,
+              $9
             )
             RETURNING *
           `,
@@ -1457,7 +1520,8 @@ app.post(
             minStock,
             req.body.active !==
               false,
-             req.body.image || req.body.imageUrl || null
+             req.body.image || req.body.imageUrl || null,
+            negocioActual()
           ]
         );
 
@@ -1504,10 +1568,12 @@ app.patch(
             SELECT *
             FROM products
             WHERE id = $1
+              AND business_id = $2
             LIMIT 1
           `,
           [
-            req.params.id
+            req.params.id,
+            negocioActual()
           ]
         );
 
@@ -1615,6 +1681,7 @@ const result = await pool.query(
       image_url = $7,
       updated_at = NOW()
     WHERE id = $8
+      AND business_id = $9
     RETURNING *
   `,
   [
@@ -1625,7 +1692,8 @@ const result = await pool.query(
     minStock,
     active,
     imageUrl,
-    req.params.id
+    req.params.id,
+    negocioActual()
   ]
 );
 
@@ -1665,14 +1733,14 @@ const result = await pool.query(
 */
 
 async function getTodayCashSession(client = pool) {
-
   const existing =
     await client.query(`
       SELECT *
       FROM cash_sessions
       WHERE session_date = CURRENT_DATE
+        AND business_id = $1
       LIMIT 1
-    `);
+    `, [negocioActual()]);
 
 
   if (
@@ -1688,17 +1756,30 @@ async function getTodayCashSession(client = pool) {
     await client.query(`
       INSERT INTO cash_sessions (
         session_date,
-        status
+        status,
+        business_id
       )
       VALUES (
         CURRENT_DATE,
-        'open'
+        'open',
+        $1
       )
+      ON CONFLICT (business_id, session_date) DO NOTHING
       RETURNING *
-    `);
-
-
-  return created.rows[0];
+    `, [negocioActual()]);
+  if (created.rows.length) {
+    return created.rows[0];
+  }
+  /* Otra petición la creó al mismo tiempo. */
+  const again =
+    await client.query(`
+      SELECT *
+      FROM cash_sessions
+      WHERE session_date = CURRENT_DATE
+        AND business_id = $1
+      LIMIT 1
+    `, [negocioActual()]);
+  return again.rows[0];
 
 }
 
@@ -1930,10 +2011,12 @@ async function calculateSaleItems(
             SELECT *
             FROM products
             WHERE id = $1
+              AND business_id = $2
             FOR UPDATE
           `,
           [
-            id
+            id,
+            negocioActual()
           ]
         );
 
@@ -2176,10 +2259,12 @@ app.post(
               FROM sales
               WHERE booking_id = $1
                 AND status = 'paid'
+                AND business_id = $2
               LIMIT 1
             `,
             [
-              bookingId
+              bookingId,
+              negocioActual()
             ]
           );
 
@@ -2254,12 +2339,13 @@ app.post(
 
               WHERE id = $2
                 AND stock >= $1
-
+                AND business_id = $3
               RETURNING stock
             `,
             [
               item.quantity,
-              item.id
+              item.id,
+              negocioActual()
             ]
           );
 
@@ -2296,13 +2382,10 @@ app.post(
               payment_method,
 
               transfer_receipt,
-
               note,
-
-              status
-
+              status,
+              business_id
             )
-
             VALUES (
               $1,
               $2,
@@ -2312,7 +2395,8 @@ app.post(
               $6,
               $7,
               $8,
-              'paid'
+              'paid',
+              $9
             )
 
             RETURNING *
@@ -2353,8 +2437,8 @@ app.post(
                   0,
                   1000
                 )
-              : null
-
+              : null,
+            negocioActual()
           ]
         );
 
@@ -2540,14 +2624,13 @@ app.get(
               AS card
 
           FROM sales
-
           WHERE
             sale_date =
               CURRENT_DATE
-
             AND status =
               'paid'
-        `);
+            AND business_id = $1
+        `, [negocioActual()]);
 
 
       const productResult =
@@ -2578,14 +2661,13 @@ app.get(
             jsonb_array_elements(
               items
             ) AS item
-
           WHERE
             sale_date =
               CURRENT_DATE
-
             AND status =
               'paid'
-        `);
+            AND business_id = $1
+        `, [negocioActual()]);
 
 
       const sessionResult =
@@ -2595,8 +2677,9 @@ app.get(
           WHERE
             session_date =
               CURRENT_DATE
+            AND business_id = $1
           LIMIT 1
-        `);
+        `, [negocioActual()]);
 
 
       const row =
@@ -2712,14 +2795,13 @@ app.post(
               AS total
 
           FROM sales
-
           WHERE
             sale_date =
               CURRENT_DATE
-
             AND status =
               'paid'
-        `);
+            AND business_id = $1
+        `, [negocioActual()]);
 
 
       const total =
@@ -2738,8 +2820,9 @@ app.post(
           WHERE
             session_date =
               CURRENT_DATE
+            AND business_id = $1
           FOR UPDATE
-        `);
+        `, [negocioActual()]);
 
 
       let session;
@@ -2786,16 +2869,16 @@ app.post(
 
                 closing_total =
                   $1
-
               WHERE id =
                 $2
-
+                AND business_id = $3
               RETURNING *
             `,
             [
               total,
               existing.rows[0]
-                .id
+                .id,
+              negocioActual()
             ]
           );
 
@@ -2809,28 +2892,24 @@ app.post(
           await client.query(
             `
               INSERT INTO cash_sessions (
-
                 session_date,
-
                 status,
-
                 closed_at,
-
-                closing_total
-
+                closing_total,
+                business_id
               )
-
               VALUES (
                 CURRENT_DATE,
                 'closed',
                 NOW(),
-                $1
+                $1,
+                $2
               )
-
               RETURNING *
             `,
             [
-              total
+              total,
+              negocioActual()
             ]
           );
 
@@ -2987,15 +3066,16 @@ app.get(
 
             WHERE
               sale_date
-              BETWEEN $1
-              AND $2
-
+                BETWEEN $1
+                AND $2
               AND status =
                 'paid'
+              AND business_id = $3
           `,
           [
             from,
-            to
+            to,
+            negocioActual()
           ]
         );
 
@@ -3052,15 +3132,16 @@ app.get(
 
             WHERE
               sale_date
-              BETWEEN $1
-              AND $2
-
+                BETWEEN $1
+                AND $2
               AND status =
                 'paid'
+              AND business_id = $3
           `,
           [
             from,
-            to
+            to,
+            negocioActual()
           ]
         );
 
@@ -3207,8 +3288,9 @@ app.get(
             data,
             updated_at
           FROM admin_settings
+          WHERE business_id = $1
           ORDER BY section ASC
-        `);
+        `, [negocioActual()]);
 
 
       const settings = {};
@@ -3309,34 +3391,32 @@ app.post(
             INSERT INTO admin_settings (
               section,
               data,
-              updated_at
+              updated_at,
+              business_id
             )
-
             VALUES (
               $1,
               $2::jsonb,
-              NOW()
+              NOW(),
+              $3
             )
-
             ON CONFLICT (
+              business_id,
               section
             )
-
             DO UPDATE SET
-
               data =
                 EXCLUDED.data,
-
               updated_at =
                 NOW()
-
             RETURNING *
           `,
           [
             section,
             JSON.stringify(
               data
-            )
+            ),
+            negocioActual()
           ]
         );
 
@@ -7555,7 +7635,8 @@ function validImageData(value) {
 }
 
 async function readSettingsMap() {
-  const result = await pool.query('SELECT section, data FROM admin_settings');
+  const result = await pool.query(
+    'SELECT section, data FROM admin_settings WHERE business_id = $1', [negocioActual()]);
   const map = {};
   for (const row of result.rows) map[row.section] = row.data || {};
   return map;
@@ -7563,10 +7644,10 @@ async function readSettingsMap() {
 
 async function saveSettingSection(section, data) {
   await pool.query(
-    `INSERT INTO admin_settings (section, data, updated_at)
-     VALUES ($1, $2::jsonb, NOW())
-     ON CONFLICT (section) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-    [section, JSON.stringify(data)]
+    `INSERT INTO admin_settings (section, data, updated_at, business_id)
+     VALUES ($1, $2::jsonb, NOW(), $3)
+     ON CONFLICT (business_id, section) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+    [section, JSON.stringify(data), negocioActual()]
   );
 }
 
@@ -7818,7 +7899,8 @@ app.get('/api/admin/media', async (req, res) => {
   try {
     await ensureMediaTable();
     const r = await pool.query(
-      'SELECT id, kind, created_at, updated_at FROM media_assets ORDER BY created_at ASC');
+      'SELECT id, kind, created_at, updated_at FROM media_assets WHERE business_id = $1 ORDER BY created_at ASC',
+      [negocioActual()]);
     res.json({ ok: true, media: r.rows });
   } catch (error) {
     console.error('ERROR LISTANDO MEDIA:', error);
@@ -7853,10 +7935,10 @@ app.post('/api/admin/media', async (req, res) => {
 
     await ensureMediaTable();
     await pool.query(
-      `INSERT INTO media_assets (id, kind, data, created_at, updated_at)
-       VALUES ($1, $2, $3, NOW(), NOW())
-       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [id, kind, image]
+      `INSERT INTO media_assets (id, kind, data, created_at, updated_at, business_id)
+       VALUES ($1, $2, $3, NOW(), NOW(), $4)
+       ON CONFLICT (business_id, id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [id, kind, image, negocioActual()]
     );
     res.json({ ok: true, id, kind });
   } catch (error) {
@@ -7870,7 +7952,7 @@ app.delete('/api/admin/media/:id', async (req, res) => {
   try {
     await ensureMediaTable();
     const id = String(req.params.id).replace(/[^A-Za-z0-9_-]/g, '');
-    const r = await pool.query('DELETE FROM media_assets WHERE id = $1', [id]);
+    const r = await pool.query('DELETE FROM media_assets WHERE id = $1 AND business_id = $2', [id, negocioActual()]);
     res.json({ ok: true, deleted: r.rowCount || 0 });
   } catch (error) {
     console.error('ERROR ELIMINANDO IMAGEN:', error);
@@ -7882,7 +7964,7 @@ app.get('/api/public/media/:id', async (req, res) => {
   try {
     await ensureMediaTable();
     const id = String(req.params.id).replace(/[^A-Za-z0-9_-]/g, '');
-    const r = await pool.query('SELECT data FROM media_assets WHERE id = $1', [id]);
+    const r = await pool.query('SELECT data FROM media_assets WHERE id = $1 AND business_id = $2', [id, negocioActual()]);
     if (!r.rows.length) return res.status(404).end();
     const data = r.rows[0].data;
     const match = /^data:(image\/(?:jpeg|png|webp));base64,/.exec(data);
@@ -7926,7 +8008,8 @@ app.get('/api/public/site', async (req, res) => {
     await ensureMediaTable();
     s = await readSettingsMap();
     media = (await pool.query(
-      'SELECT id, kind, updated_at FROM media_assets ORDER BY created_at ASC')).rows;
+      'SELECT id, kind, updated_at FROM media_assets WHERE business_id = $1 ORDER BY created_at ASC',
+      [negocioActual()])).rows;
   } catch (error) {
     console.error('ERROR /api/public/site (PostgreSQL):', error);
   }
@@ -10431,9 +10514,34 @@ app.use(
 
 /* =========================================================
    PREPARAR TABLAS ADMINISTRATIVAS PARA VARIAS BARBERÍAS
-   Solo agrega la columna business_id con el valor de la
-   barbería actual. No modifica ni borra filas existentes.
+   - Agrega business_id con el valor de la barbería actual.
+   - Cambia las claves únicas para que sean por barbería:
+     caja por (barbería, fecha), configuración por
+     (barbería, sección), imágenes por (barbería, id).
+   No modifica ni borra filas. Es idempotente: se puede
+   ejecutar en cada arranque.
 ========================================================= */
+
+async function columnasDeRestriccion(client, tabla, tipo) {
+
+  const r =
+    await client.query(
+      `SELECT c.conname,
+              array_agg(a.attname::text ORDER BY k.ord) AS columnas
+       FROM pg_constraint c
+       CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+       JOIN pg_attribute a
+         ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+       WHERE c.conrelid = to_regclass($1)
+         AND c.contype = $2
+       GROUP BY c.conname`,
+      [tabla, tipo]
+    );
+
+  return r.rows;
+
+}
+
 
 async function prepararTablasMultiempresa() {
 
@@ -10457,6 +10565,94 @@ async function prepararTablasMultiempresa() {
       `CREATE INDEX IF NOT EXISTS ${tabla}_business_idx
          ON ${tabla} (business_id)`
     );
+
+  }
+
+
+  const client =
+    await pool.connect();
+
+  try {
+
+    await client.query('BEGIN');
+
+    /* Una sola instancia cambia las claves a la vez. */
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      ['master-reservas:claves-multiempresa']
+    );
+
+
+    /* Caja: una por barbería y día. */
+    if (await client.query(`SELECT to_regclass('cash_sessions') AS t`).then(r => r.rows[0].t)) {
+
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS cash_sessions_business_date_key
+           ON cash_sessions (business_id, session_date)`
+      );
+
+      for (const u of await columnasDeRestriccion(client, 'cash_sessions', 'u')) {
+
+        if (u.columnas.join(',') === 'session_date') {
+
+          await client.query(
+            `ALTER TABLE cash_sessions DROP CONSTRAINT ${client.escapeIdentifier(u.conname)}`
+          );
+
+        }
+
+      }
+
+    }
+
+
+    /* Configuración e imágenes: clave primaria por barbería. */
+    for (const [tabla, columna] of [
+      ['admin_settings', 'section'],
+      ['media_assets', 'id']
+    ]) {
+
+      const [pk] =
+        await columnasDeRestriccion(client, tabla, 'p');
+
+      if (pk && pk.columnas.join(',') === columna) {
+
+        await client.query(
+          `ALTER TABLE ${tabla}
+             DROP CONSTRAINT ${client.escapeIdentifier(pk.conname)},
+             ADD CONSTRAINT ${tabla}_pkey PRIMARY KEY (business_id, ${columna})`
+        );
+
+      }
+
+    }
+
+
+    if (await client.query(`SELECT to_regclass('sales') AS t`).then(r => r.rows[0].t)) {
+
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS sales_business_date_idx
+           ON sales (business_id, sale_date)`
+      );
+
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS sales_business_booking_idx
+           ON sales (business_id, booking_id)`
+      );
+
+    }
+
+    await client.query('COMMIT');
+
+  } catch (error) {
+
+    await client.query('ROLLBACK').catch(() => {});
+
+    throw error;
+
+  } finally {
+
+    client.release();
 
   }
 
