@@ -57,7 +57,7 @@ function prepararCarpeta(db) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'master-reservas-prueba-'));
   fs.copyFileSync(path.join(RAIZ, 'server.js'), path.join(dir, 'server.js'));
   /* Módulos propios de la aplicación (pueden no existir en versiones anteriores). */
-  for (const extra of ['almacen.js', 'autenticacion.js', 'correo.js', 'plataforma.js', 'firma-plataforma.js']) {
+  for (const extra of ['almacen.js', 'autenticacion.js', 'correo.js', 'plataforma.js', 'firma-plataforma.js', 'despliegue-inicial.js']) {
     if (fs.existsSync(path.join(RAIZ, extra))) fs.copyFileSync(path.join(RAIZ, extra), path.join(dir, extra));
   }
   fs.cpSync(path.join(RAIZ, 'public'), path.join(dir, 'public'), { recursive: true });

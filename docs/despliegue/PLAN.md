@@ -1,166 +1,167 @@
-# Plan de despliegue — instalación limpia de Master Fade
+# Publicación de Master Fade — procedimiento directo (opción A, sin terminal)
 
-Estado: **preparado, sin ejecutar.** Nada de este plan se ha hecho en producción. Cada paso
-marcado con 🔒 necesita tu autorización final.
+Estado: **preparado, sin ejecutar.** Los pasos marcados con 🔒 necesitan tu autorización
+definitiva. Todo se hace desde el panel de Render y GitHub; **no hace falta Shell ni instalar nada**.
 
-Ramas listas: `claude/hopeful-curie-fcnqea` en `El-Master-reservas-` y en `master-fade-`.
-Ninguno de los dos `main` cambió desde que se crearon, así que la fusión no tiene conflictos.
+## Qué hace este procedimiento
 
-## 0. Qué cambió con tu aclaración
+- Publica las fases 1 a 6 en los **dos servicios actuales** de Render. No se crean servicios nuevos.
+- **No borra nada.** En su primer arranque, la versión nueva de El Máster Reservas mueve las
+  5 tablas de la demostración al esquema `respaldo_demo` de la misma base: ese es el respaldo.
+  Después crea tablas nuevas, vacías.
+- Tu barbería es la principal (`el-master`): página pública de reservas, WhatsApp/Elia y
+  protección contra vencimiento. Empieza con la plantilla (un barbero, 6 servicios, sin
+  reservas), que editas en el panel.
+- Tus dos cuentas se crean solas en el primer arranque, con variables de Render:
+  - **propietario** de tu barbería en El Máster Reservas;
+  - **administrador** del Panel Maestro.
+- El catálogo de planes del Panel **no se modifica**.
+- Resend (correo) queda para después: no es necesario para publicar. Sin correo, el registro
+  de otras barberías permanece cerrado.
 
-La barbería actual es solo una demostración, así que **no se migran datos**:
-- no hay importación de reservas;
-- no hace falta una ventana de mantenimiento para conservar datos;
-- volver atrás es sencillo.
+## Comprobación 1 — Qué base usa cada servicio (antes de autorizar)
 
-Se empieza con una base limpia, conservando:
-- el código y los módulos;
-- el catálogo de planes del Panel;
-- las credenciales de WhatsApp y Meta (son variables de Render y no se tocan).
+En https://dashboard.render.com:
 
-## 1. Qué es demostración y qué se conserva
+1. Abre el **Web Service de El Máster Reservas** → menú **Environment** → fila `DATABASE_URL`.
+   - Si está **enlazada** a una base, Render muestra el nombre de esa base: anótalo.
+   - Si es un valor escrito, pulsa el ícono del ojo **sin copiarlo** y fíjate solo en la parte
+     después de `@` y antes de `.`, que empieza por `dpg-`: es el identificador del servidor.
+2. Repite lo mismo en el **Web Service del Panel Maestro**.
+3. Abre cada **PostgreSQL** de la lista → página **Info**. Anota su **nombre**, su
+   identificador `dpg-…` (aparece en la dirección de la página y en *Hostname*) y el campo
+   **Database** (el nombre de la base dentro del servidor).
+4. En cada Web Service → **Settings** → **Build & Deploy**, anota la **rama** (*Branch*). Debe
+   ser `main`; si es otra, dímelo antes de seguir.
+5. Respóndeme con:
+   - el nombre de la base PostgreSQL de cada servicio;
+   - si son **la misma o distintas**;
+   - el campo **Database** de la base de El Máster Reservas, que es el valor exacto para `ARCHIVAR_DEMO`.
 
-Comprobado en el código de `main` (lo que hoy está en producción). El inventario del paso P3
-lo confirma sobre la base real.
+Los identificadores `dpg-…` y los nombres no son secretos. **Nunca compartas la URL completa ni
+la contraseña.**
 
-| Dónde | Contenido | Qué se hace |
-|---|---|---|
-| Disco de Render de El Máster Reservas (`data/db.json`) | Agenda de la demostración: barberos, servicios, horarios, reservas, clientes | Desaparece solo al desplegar (el disco es temporal). No hay que borrarlo. |
-| PostgreSQL de El Máster Reservas: `sales`, `cash_sessions`, `products`, `admin_settings`, `media_assets` | Ventas, caja, productos, configuración (textos de Elia, página pública) e imágenes de la demostración | Se borran con `limpiar-demo.js` después de un respaldo verificado. |
-| Cuentas de usuario | **No existen** en la versión actual (no tiene inicio de sesión) | Nada que borrar. |
-| Conversaciones de Elia | Solo en memoria | Se reinician al desplegar, como en cualquier despliegue. |
-| PostgreSQL del Panel: `master_fade_plans`, `master_fade_plan_changes` | **Catálogo de planes real** (precios y días de prueba) y su historial | **Se conservan.** |
-| Barberías de demostración del Panel | Solo en el navegador (`localStorage`) | La versión nueva las borra del navegador al abrir el Panel. |
-| Variables de Render: `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `DATABASE_URL` | Credenciales reales | **No se tocan.** |
-| Cualquier otra tabla que aparezca en la base | Desconocida | `limpiar-demo.js` nunca la toca. |
+## Comprobación 2 — La limpieza solo afecta a la demostración (comprobado en el código y ensayado)
 
-`limpiar-demo.js` tiene varias protecciones:
-- Sin `--ejecutar` solo muestra la lista; no borra nada.
-- Para ejecutarlo exige el **nombre exacto** de la base y un archivo de **respaldo**.
-- Borra todo en **una sola transacción**: si algo falla, no se borra nada.
-- Nunca usa `CASCADE`.
-- Al terminar, comprueba que las tablas conservadas siguen idénticas.
+- La versión nueva **solo mueve** estas 5 tablas: `sales`, `cash_sessions`, `products`,
+  `admin_settings` y `media_assets`. Son las únicas que crea la versión que hoy está publicada.
+- **No toca:**
+  - las tablas del Panel (`master_fade_*`), aunque compartan base;
+  - ninguna otra tabla;
+  - las variables de WhatsApp y Meta, que no están en la base.
+- La agenda de la demostración (barberos, reservas y clientes) vive en el disco temporal de
+  Render y se descarta sola al desplegar.
+- **Protecciones** (todas ensayadas con el código real que hoy está en producción):
+  - si `ARCHIVAR_DEMO` no coincide exactamente con el nombre de la base, la versión nueva no arranca, no toca nada y Render mantiene la anterior;
+  - solo actúa en el primer arranque de la versión nueva; después no hace nada aunque la variable siga;
+  - si ya existe un respaldo en `respaldo_demo`, no lo sobrescribe y no arranca;
+  - todo ocurre en una transacción.
 
-Si las dos aplicaciones comparten la misma base, las tablas del Panel quedan intactas; el
-ensayo lo prueba.
+## Comprobación 3 — Catálogo de planes del Panel
 
-## 2. Protección de El Máster y el inicio limpio
+- La versión nueva del Panel solo **crea tablas nuevas**: acceso, barberías, suscripciones,
+  historial y actividad.
+- `master_fade_plans` y `master_fade_plan_changes` no se modifican.
+- Una prueba lo comprueba después de varios arranques (Individual, Pro y Business con 7 días).
 
-- **Cómo funciona hoy la barbería principal:**
-  - Se crea sola en el primer arranque. Su identificador interno es `el-master` (`DEFAULT_BUSINESS_ID`).
-  - Arranca solo con la plantilla: el nombre «El Máster», un barbero «Master», 6 servicios y el horario por defecto. Sin reservas ni cuentas.
-  - Nunca se bloquea por suscripción.
-  - **Es la única que hoy tiene página pública de reservas y WhatsApp/Elia.**
-- **Las barberías creadas con el registro** pueden:
-  - usar todo el panel (agenda, caja, productos, equipo);
-  - ser administradas desde el Panel Maestro, con plan y prueba de 7 días.
+## Comprobación 4 — Variables y acceso de administrador
 
-  **Pero todavía no tienen página pública ni WhatsApp propios:** sus clientes no pueden reservar en línea.
+Prepara antes dos valores aleatorios y guárdalos en tu gestor de contraseñas. **No los pegues
+en el chat.**
+- **`PLATAFORMA_CLAVE`:** al menos 48 caracteres aleatorios, el **mismo** valor en los dos
+  servicios. Puedes usar el generador de tu gestor de contraseñas, o el botón **Generate** de
+  Render si aparece al crear la variable, y luego copiarlo al otro servicio.
+- **Tus contraseñas:** propietario (10 caracteres o más) y administrador del Panel (12 o más).
 
-**Decisión que necesito de ti — cómo crear tu barbería:**
+**El Máster Reservas** → **Environment** → **Add Environment Variable**:
 
-| | A. Tu barbería es la principal *(recomendada para lanzar ya)* | B. Tu barbería por el registro normal |
-|---|---|---|
-| Cómo | Después de desplegar, el script de consola crea tu cuenta de propietario. En el panel cambias el nombre, los barberos, los servicios y los horarios de la plantilla. | Te registras en `acceso.html` como cualquier cliente. |
-| Página pública y WhatsApp | **Sí**, desde el primer día | **No**, hasta que se desarrolle la página pública por barbería |
-| Suscripción | Protegida: nunca vence | Prueba de 7 días; el Panel la administra |
-| Requisitos | Ninguno nuevo | Configurar el correo (Resend) para confirmar la cuenta; requiere crear la cuenta de Resend |
-| Inicio limpio | Sí: la plantilla no tiene reservas ni clientes | Sí, pero la principal «El Máster» queda como plantilla vacía |
+| Variable | Valor |
+|---|---|
+| `PLATAFORMA_CLAVE` | La clave compartida |
+| `PUBLIC_BASE_URL` | La dirección pública del servicio, con `https://` |
+| `ARCHIVAR_DEMO` | El campo **Database** de su base (Comprobación 1) |
+| `PROPIETARIO_INICIAL_EMAIL` | Tu correo |
+| `PROPIETARIO_INICIAL_NOMBRE` | Tu nombre |
+| `PROPIETARIO_INICIAL_CLAVE` | Tu contraseña de propietario |
 
-Las dos opciones conservan la seguridad: la protección solo se aplica a la barbería principal,
-y el registro sigue cerrado en producción hasta configurar el correo. Con la opción A, el
-registro normal se puede probar más tarde con una barbería de prueba, cuando el correo esté
-listo.
+No cambies `DATABASE_URL` ni las variables de WhatsApp.
 
-## 3. Variables de entorno (solo los nombres, nunca los valores)
+**Panel Maestro** → **Environment**:
 
-**El Máster Reservas (servicio web actual en Render)**
+| Variable | Valor |
+|---|---|
+| `RESERVAS_URL` | La dirección pública de El Máster Reservas, con `https://` |
+| `PLATAFORMA_CLAVE` | La misma clave compartida |
+| `TRUST_PROXY` | `1` |
+| `ADMIN_INICIAL_EMAIL` | Tu correo de administrador |
+| `ADMIN_INICIAL_NOMBRE` | Tu nombre |
+| `ADMIN_INICIAL_CLAVE` | Tu contraseña de administrador |
 
-| Variable | Estado | Nota |
-|---|---|---|
-| `DATABASE_URL`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN` | Ya existen | Sin cambios |
-| `PLATAFORMA_CLAVE` | **Nueva, obligatoria** | 48 caracteres aleatorios o más (`openssl rand -base64 48`). El mismo valor en el Panel. Guárdala en un gestor de contraseñas. |
-| `PUBLIC_BASE_URL` | **Nueva, obligatoria** | Dirección pública con `https://`. La usan los enlaces de la cuenta del propietario y de los correos. |
-| `RENDER` | Render la define sola | Activa el modo producción: registro cerrado y cookies seguras. |
-| `CLAVE_DOS_PASOS` | Opcional | Activa la verificación en dos pasos. Valor aleatorio largo que no debe perderse. |
-| `RESEND_API_KEY`, `CORREO_REMITENTE`, `CORREO_RESPONDER_A` | Opcional (opción B) | Correo; requiere crear la cuenta de Resend y verificar el dominio. |
-| `REGISTRO_ABIERTO=1` | Opcional | Solo funciona con el correo configurado. |
-| `DEFAULT_BUSINESS_ID` | No definir | Por defecto, `el-master`. |
+Al guardar variables, Render puede ofrecer **Save, rebuild and deploy**. Elige **Save only**
+(o «Save changes» sin desplegar) para que nada se publique antes de tiempo. Si Render
+redespliega por error la versión actual, no pasa nada: sigue siendo la misma versión.
 
-**Panel Maestro (servicio web actual en Render)**
+Las cuentas solo se crean si todavía no existe ninguna. Después de entrar por primera vez,
+**borra `PROPIETARIO_INICIAL_CLAVE` y `ADMIN_INICIAL_CLAVE`** de Render.
 
-| Variable | Estado | Nota |
-|---|---|---|
-| `DATABASE_URL`, `DATABASE_SSL` | Ya existen | Sin cambios |
-| `RESERVAS_URL` | **Nueva, obligatoria** | Dirección `https://` de El Máster Reservas |
-| `PLATAFORMA_CLAVE` | **Nueva, obligatoria** | La misma que en Reservas |
-| `TRUST_PROXY=1` | Recomendada | Para que el límite de intentos use la IP real |
-| `ADMIN_API_KEY` | Opcional | Ya no hace falta para el panel. Si se deja vacía, la edición por scripts queda desactivada. |
+## Comprobación 5 — Recuperación si algo falla
 
-## 4. Pasos exactos
+| Situación | Qué pasa o qué se hace |
+|---|---|
+| La versión nueva no arranca (por ejemplo, `ARCHIVAR_DEMO` incorrecto) | Render marca el despliegue como fallido y **mantiene la versión anterior**. No se tocó nada. |
+| Falla algo después de publicar | Render → servicio → **Events** → despliegue anterior → **Rollback**. |
+| Quieres recuperar la demostración | `scripts/despliegue/restaurar-demo.sql` devuelve las tablas de `respaldo_demo` y aparta las nuevas en `respaldo_nueva`, sin borrar. Ensayado. 🔒 |
+| Falla el Panel | **Rollback** del Panel. El catálogo no cambió. |
 
-### Preparación (sin efecto en producción)
+## Pasos de la publicación 🔒 (unos 20 minutos)
 
-| Paso | Qué | Quién y cómo |
-|---|---|---|
-| P1 | Anotar en Render: el nombre de cada servicio y su rama de despliegue, la base enlazada a cada uno (nombre, no valor), el plan y la caducidad de cada PostgreSQL. **Pausar el despliegue automático** de los dos servicios. 🔒 | Tú, en el panel de Render |
-| P2 | Respaldo de la base de Reservas (y de la del Panel si es otra): una instantánea en Render si el plan lo permite, más `DATABASE_URL='<URL externa>' scripts/respaldo/respaldo-postgres.sh` | Tu computadora (Node 22 y `pg_dump` 16), o esta sesión si me das acceso (sección 7) |
-| P3 | Inventario de solo lectura: `DATABASE_URL=... node scripts/despliegue/inventario.js` en cada base. Confirma qué tablas hay, si la base es compartida y si aparece alguna tabla «otra». | Igual que P2 |
-| P4 | Verificar el respaldo: crear una base vacía de prueba y ejecutar `RESTAURAR_URL=... scripts/respaldo/verificar-restauracion.sh respaldos/pg-<fecha>` (sumas SHA-256, restauración y mismas filas en cada tabla) | Igual que P2 |
-| P5 | Simulación de la limpieza: `DATABASE_URL=... node scripts/despliegue/limpiar-demo.js`. Muestra exactamente qué se borraría. **Revisas la lista.** | Igual que P2 |
-| P6 | Generar `PLATAFORMA_CLAVE` (y `CLAVE_DOS_PASOS` si la quieres) y guardarlas en tu gestor de contraseñas | Tú |
+1. **Render — variables** de las dos tablas de arriba, con **Save only**. Van **antes** de
+   fusionar: si Render redespliega al guardar, publica la versión actual, que ignora las
+   variables nuevas. No pasa nada.
+2. **GitHub — fusionar las dos ramas con `main`.** Las dos `main` no cambiaron desde que se
+   crearon las ramas, así que la fusión no tiene conflictos.
+   - Con tu autorización, abro un Pull Request en cada repositorio y lo fusionas tú; o lo
+     fusiono yo si me lo indicas.
+   - Con Auto-Deploy desactivado, fusionar no publica nada.
+3. **Render — El Máster Reservas** → **Manual Deploy** → **Deploy latest commit**. En **Logs**
+   deben aparecer, en este orden:
+   - `ARCHIVAR_DEMO: datos de la demostración guardados en el esquema respaldo_demo …`
+   - `MIGRACIÓN APLICADA: …` (varias)
+   - `BARBERÍA PROTEGIDA: el-master`
+   - `AGENDA EN POSTGRESQL LISTA (barbería: el-master, restricción de solapes: activa)`
+   - `PROPIETARIO INICIAL CREADO para "el-master": …`
+   - `EL MÁSTER RESERVAS INICIADO`
 
-### Ejecución 🔒 (unos 15 minutos, mejor a una hora de poco movimiento)
+   Si aparece `NO SE ARRANCA`, la versión anterior sigue funcionando: envíame el mensaje.
+4. **Render — Panel Maestro** → **Manual Deploy** → **Deploy latest commit**. En **Logs**:
+   - `administrador inicial creado …`
+   - `sincronización con El Máster Reservas cada 60 s.`
+5. **Comprobaciones finales:**
+   - **Página pública:** carga y muestra la disponibilidad del día.
+   - **Panel de Reservas** (`/acceso.html`): entras con tu correo de propietario; el inicio está vacío.
+   - **Reserva de prueba:** haces una desde la página pública y luego la cancelas en el panel.
+   - **WhatsApp:** escribes «hola» a Elia y responde.
+   - **Panel Maestro:** entras; en **Barberías → Sincronizar ahora** aparece «El Máster» como *protegida*.
+6. **Render — limpiar variables:** borra `PROPIETARIO_INICIAL_CLAVE`, `ADMIN_INICIAL_CLAVE` y
+   `ARCHIVAR_DEMO`, con **Save only**: no hace falta redesplegar.
+7. **Panel de Reservas → Configuración:** cambia el nombre de la barbería, los barberos, los
+   servicios y los horarios por los tuyos.
+8. Activa de nuevo **Auto-Deploy** cuando quieras.
 
-| Paso | Qué | Efecto visible |
-|---|---|---|
-| E1 | Fusionar las dos ramas con `main` (avance rápido, sin conflictos) | Ninguno, con el despliegue automático pausado |
-| E2 | Render, El Máster Reservas: agregar `PLATAFORMA_CLAVE` y `PUBLIC_BASE_URL` | Ninguno hasta desplegar |
-| E3 | `limpiar-demo.js --ejecutar --confirmar <base> --respaldo <archivo .dump>` | Desde aquí hasta E4, el panel antiguo falla en caja, productos y configuración. Solo afecta a la demostración y dura minutos. |
-| E4 | Despliegue manual de Reservas. En los registros deben verse las migraciones aplicadas, `BARBERÍA PROTEGIDA: el-master`, `AGENDA EN POSTGRESQL LISTA … restricción de solapes: activa` y `EL MÁSTER RESERVAS INICIADO`. | Render mantiene la versión anterior hasta que la nueva responde: sin caída del servicio. Si el servicio tiene un disco persistente, Render detiene antes la versión anterior: unos segundos sin servicio. Se ve en P1. |
-| E5 | Tu cuenta de propietario (opción A), en el *Shell* de Render o desde tu computadora con la URL externa: `node scripts/cuentas/crear-propietario.js --negocio el-master --email <tu correo> --nombre "<tu nombre>"`. Devuelve un enlace de un solo uso, válido 24 horas, para crear tu contraseña. | — |
-| E6 | Render, Panel: agregar `RESERVAS_URL`, `PLATAFORMA_CLAVE` y `TRUST_PROXY=1`, y desplegar | Al abrir el Panel se pedirá iniciar sesión |
-| E7 | Tu administrador del Panel: `node scripts/crear-admin.js <tu correo> "<tu nombre>"`. Si no indicas `ADMIN_NUEVA_CLAVE`, genera una contraseña aleatoria y la muestra **una sola vez**: así no queda en el historial de comandos. Cámbiala volviendo a ejecutar el script cuando quieras. | — |
-| E8 | Comprobaciones: la página pública carga; disponibilidad del día; una reserva de prueba que después cancelas; un mensaje de prueba a Elia por WhatsApp; entrar al panel de Reservas; en el Panel Maestro, «Sincronizar ahora» muestra «El Máster» protegida; el registro sigue cerrado. | — |
-| E9 | Reactivar el despliegue automático | — |
+## Ensayado (`test/despliegue.test.js` en Reservas y `test/admin-inicial.test.js` en el Panel)
 
-## 5. Cómo volver atrás
+Con el código real que hoy está publicado como «producción»:
+1. Demostración y catálogo del Panel en la misma base.
+2. `ARCHIVAR_DEMO` incorrecto: la versión nueva no arranca y la base queda igual.
+3. Primer arranque correcto:
+   - las 5 tablas pasan a `respaldo_demo` con todas sus filas;
+   - las tablas nuevas empiezan vacías y `el-master` queda protegida;
+   - el propietario puede entrar y la contraseña no aparece en los registros;
+   - el catálogo sigue intacto.
+4. Segundo arranque con las variables todavía puestas: no repite nada y no cambia la contraseña.
+5. Reversión: `restaurar-demo.sql` devuelve la demostración y la versión anterior arranca con ella.
+6. Panel: el administrador inicial se crea una sola vez; una contraseña corta no crea nada; el
+   catálogo de planes no cambia.
 
-| Problema | Acción | Datos |
-|---|---|---|
-| La versión nueva de Reservas no arranca | Nada: Render mantiene la anterior y marca el despliegue como fallido | Sin cambios |
-| Falla algo después del cambio | Render → *Rollback* al despliegue anterior. La versión anterior arranca sobre la base nueva (ensayado). Si al guardar su configuración da error, se ejecuta `scripts/migracion/revertir-claves-fase2.sql` (ensayado; no borra filas). | Las tablas nuevas se conservan para volver a la versión nueva |
-| Quieres recuperar la demostración | `pg_restore` del respaldo P2 🔒 | Vuelven los datos de la demostración |
-| Falla el Panel | Render → *Rollback*. La versión anterior ignora las tablas nuevas. El catálogo de planes no cambia. | Sin pérdida |
-
-## 6. Ensayo realizado (`test/despliegue.test.js`, también en GitHub Actions)
-
-Usa el código real de `main` como producción:
-1. `main` con datos de demostración en una base que además tiene tablas del Panel y una tabla ajena.
-2. El inventario clasifica bien y no muestra datos personales.
-3. Respaldo con `pg_dump` y restauración verificada en otra base. Se niega a restaurar sobre una base con datos.
-4. Limpieza:
-   - la simulación no borra nada;
-   - se niega a ejecutar con otro nombre de base o sin respaldo;
-   - al ejecutar borra solo las 5 tablas de la demostración; el Panel y la tabla ajena quedan intactos.
-5. Primer arranque de la versión nueva como en Render:
-   - base limpia, `el-master` protegida y activa;
-   - 0 cuentas, reservas, ventas, productos o imágenes;
-   - registro cerrado y panel con inicio de sesión obligatorio.
-6. Cuenta del propietario con el script: el enlace crea la contraseña, se entra y no hay datos de la demostración.
-7. Con el correo configurado (Resend simulado), una barbería nueva se registra por el proceso normal: correo de confirmación, inicio de sesión, prueba de 7 días y visible para el Panel.
-8. Reversión: `main` vuelve a arrancar sobre la base nueva y guarda su configuración después del script de claves. Las cuentas nuevas se conservan.
-
-## 7. Lo que no pude verificar desde esta sesión
-
-Desde este entorno **no hay acceso a Render**: su política de red bloquea la conexión. Por
-eso no he visto los servicios, las bases ni los respaldos reales. Hay dos formas de completarlo:
-
-1. **Tú ejecutas P1 a P5** con los comandos de arriba y me pasas la salida del inventario y de
-   la verificación. No contienen datos personales ni credenciales.
-2. **Me das acceso** en la configuración del entorno:
-   - en *Network access*, agregar los dominios de Render (`*.render.com` y `*.onrender.com`);
-   - guardar la URL externa de la base como variable de entorno, por ejemplo `RESERVAS_DATABASE_URL`.
-
-   Nunca la pegues en el chat. Con eso ejecuto P2 a P5 en modo de solo lectura (la limpieza solo
-   en simulación) y te muestro los resultados.
+El procedimiento anterior con terminal (`limpiar-demo.js`, `respaldo-postgres.sh` y
+`verificar-restauracion.sh`) también está ensayado y sigue disponible como alternativa.

@@ -264,3 +264,104 @@ test('ensayo general: instalación limpia en producción', { skip: omitir }, asy
     await prod.detener();
   });
 });
+
+/*
+  Variante SIN terminal (recomendada para Render sin Shell): la versión nueva
+  guarda la demostración en el esquema respaldo_demo en su primer arranque
+  (ARCHIVAR_DEMO) y crea la cuenta del propietario desde variables de entorno.
+*/
+test('ensayo general: instalación limpia sin terminal (ARCHIVAR_DEMO y propietario inicial)', { skip: omitir }, async t => {
+  const { lanzarServidor } = require('./apoyo/servidor');
+  const sufijo = crypto.randomBytes(4).toString('hex');
+  const nombre = `archivar_${sufijo}_test`;
+  const admin = crearPool(URL_PG);
+  await admin.query(`CREATE DATABASE ${nombre}`);
+  const URL_DB = urlDe(nombre);
+  const db = crearPool(URL_DB);
+  const servidores = [];
+  t.after(async () => {
+    for (const s of servidores) { await s.detener().catch(() => {}); s.borrar?.(); }
+    await db.end();
+    await admin.query(`DROP DATABASE IF EXISTS ${nombre} WITH (FORCE)`).catch(() => {});
+    await admin.end();
+  });
+  const contar = async tabla => (await db.query(`SELECT count(*)::int AS n FROM ${tabla}`)).rows[0].n;
+  const envNueva = {
+    DATABASE_URL: URL_DB, RENDER: 'true', PLATAFORMA_CLAVE: CLAVE_PLATAFORMA, ARCHIVAR_DEMO: nombre,
+    PROPIETARIO_INICIAL_EMAIL: 'dueno@prueba.test', PROPIETARIO_INICIAL_CLAVE: CLAVE, PROPIETARIO_INICIAL_NOMBRE: 'Dueño'
+  };
+  let demo;
+
+  await t.test('producción actual con datos de demostración y el catálogo del Panel en la misma base', async () => {
+    const prod = await iniciarProduccion(URL_DB);
+    servidores.push(prod);
+    assert.equal((await prod.pedir('POST', '/api/admin/settings', { section: 'pagina', data: { title: 'Demo' } })).status, 200);
+    assert.equal((await prod.pedir('POST', '/api/admin/products', { name: 'Cera demo', price: 4.5, cost: 2, stock: 10, minStock: 2 })).status, 200);
+    const reserva = await prod.pedir('POST', '/api/bookings', { name: 'Cliente Demo', phone: '0991234567', barberId: 'master', serviceIds: ['corte'], date: proximoDia(2), time: '10:00' });
+    assert.equal((await prod.pedir('POST', '/api/sales', { bookingId: reserva.json.booking.id, paymentMethod: 'cash', items: [{ type: 'service', id: 'corte', quantity: 1 }] })).status, 200);
+    assert.equal((await prod.pedir('POST', '/api/admin/media', { kind: 'barber', ref: 'master', image: PNG_1X1 })).status, 200);
+    await prod.detener();
+    await db.query(`CREATE TABLE master_fade_plans (id BIGSERIAL PRIMARY KEY, name TEXT UNIQUE, price NUMERIC(10,2), trial_days INT)`);
+    await db.query(`INSERT INTO master_fade_plans (name, price, trial_days) VALUES ('Individual', 9.99, 7), ('Pro', 19.99, 7), ('Business', 34.99, 7)`);
+    demo = {};
+    for (const tbl of ['sales', 'cash_sessions', 'products', 'admin_settings', 'media_assets']) demo[tbl] = await contar(tbl);
+    assert.ok(demo.sales >= 1 && demo.products >= 1 && demo.media_assets >= 1 && demo.admin_settings >= 1);
+  });
+
+  await t.test('con un nombre de base equivocado, la versión nueva no arranca y no toca nada', async () => {
+    const s = await lanzarServidor({ postgres: true, negocio: 'el-master', env: { ...envNueva, ARCHIVAR_DEMO: 'otra_base' } });
+    servidores.push(s);
+    const codigo = await new Promise(r => (s.proc.exitCode !== null ? r(s.proc.exitCode) : s.proc.once('exit', r)));
+    assert.equal(codigo, 1, 'Render la marcaría como fallida y mantendría la anterior');
+    assert.match(s.logs.join('\n'), /no coincide con la base conectada/);
+    assert.equal(await contar('sales'), demo.sales);
+    assert.equal((await db.query(`SELECT to_regnamespace('respaldo_demo') AS e`)).rows[0].e, null);
+    assert.equal((await db.query(`SELECT to_regclass('public.businesses') AS t`)).rows[0].t, null, 'no se creó ninguna tabla nueva');
+  });
+
+  let nueva;
+  await t.test('primer arranque: guarda la demostración, empieza vacía y crea al propietario', async () => {
+    nueva = await iniciarServidor({ postgres: true, negocio: 'el-master', sesion: false, env: envNueva });
+    servidores.push(nueva);
+    const logs = nueva.logs.join('\n');
+    assert.match(logs, /ARCHIVAR_DEMO: datos de la demostración guardados en el esquema respaldo_demo/);
+    assert.match(logs, /PROPIETARIO INICIAL CREADO para "el-master": d\*\*\*@prueba\.test/);
+    assert.ok(!logs.includes(CLAVE), 'la contraseña nunca aparece en los registros');
+    for (const [tbl, n] of Object.entries(demo)) {
+      assert.equal(await contar(`respaldo_demo.${tbl}`), n, `respaldo_demo.${tbl} conserva sus filas`);
+    }
+    for (const tbl of ['sales', 'products', 'media_assets', 'cash_sessions', 'bookings']) assert.equal(await contar(tbl), 0, tbl);
+    assert.equal(await contar('master_fade_plans'), 3, 'el catálogo del Panel no se tocó');
+    const [b] = (await db.query('SELECT id, protected, status FROM businesses')).rows;
+    assert.deepEqual(b, { id: 'el-master', protected: true, status: 'active' });
+    const login = await nueva.pedir('POST', '/api/auth/login', { email: 'dueno@prueba.test', password: CLAVE }, { cookie: null });
+    assert.equal(login.status, 200);
+    const sesion = (await nueva.pedir('GET', '/api/auth/sesion', undefined, { cookie: cookieDe(login) })).json;
+    assert.deepEqual([sesion.role, sesion.business.id, sesion.subscription.protected], ['owner', 'el-master', true]);
+    assert.equal((await nueva.pedir('GET', '/admin.html', undefined, { cookie: null })).status, 302);
+  });
+
+  await t.test('los siguientes arranques no repiten nada aunque las variables sigan', async () => {
+    await nueva.detener();
+    nueva = await iniciarServidor({ postgres: true, negocio: 'el-master', sesion: false, env: { ...envNueva, PROPIETARIO_INICIAL_CLAVE: 'Otra-clave-distinta-9' } });
+    servidores.push(nueva);
+    const logs = nueva.logs.join('\n');
+    assert.match(logs, /la versión nueva ya está instalada en esta base; no se archiva nada/);
+    assert.match(logs, /ya tiene propietario; no se hace nada/);
+    assert.equal((await nueva.pedir('POST', '/api/auth/login', { email: 'dueno@prueba.test', password: CLAVE }, { cookie: null })).status, 200, 'la contraseña no cambió');
+    assert.equal(await contar('respaldo_demo.sales'), demo.sales);
+  });
+
+  await t.test('volver atrás: restaurar-demo.sql devuelve la demostración y la versión anterior arranca con ella', async () => {
+    await nueva.detener();
+    const r = await ejecutar('psql', [URL_DB, '-v', 'ON_ERROR_STOP=1', '-q', '-f', path.join(RAIZ, 'scripts/despliegue/restaurar-demo.sql')]).then(() => 0, e => e.stderr);
+    assert.equal(r, 0, String(r));
+    for (const [tbl, n] of Object.entries(demo)) assert.equal(await contar(`public.${tbl}`), n, tbl);
+    assert.equal((await db.query(`SELECT to_regclass('respaldo_nueva.sales') AS t`)).rows[0].t, 'respaldo_nueva.sales', 'lo nuevo se aparta, no se borra');
+    const prod = await iniciarProduccion(URL_DB);
+    servidores.push(prod);
+    const productos = await prod.pedir('GET', '/api/admin/products');
+    assert.equal(productos.status, 200);
+    assert.ok(JSON.stringify(productos.json).includes('Cera demo'), 'la versión anterior ve su demostración');
+  });
+});

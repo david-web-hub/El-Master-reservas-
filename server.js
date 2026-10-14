@@ -46,6 +46,11 @@ const {
   clavesConfiguradas
 } = require('./firma-plataforma');
 
+const {
+  archivarDemo,
+  propietarioInicial
+} = require('./despliegue-inicial');
+
 const DEFAULT_BUSINESS_ID =
   validarNegocio(
     process.env.DEFAULT_BUSINESS_ID ||
@@ -1154,8 +1159,22 @@ await pool.query(`
 }
 
 
+/*
+  Instalación limpia (ARCHIVAR_DEMO): antes de crear o modificar cualquier
+  tabla, guarda la demostración en el esquema respaldo_demo. Si no es seguro,
+  el proceso se detiene y Render mantiene la versión anterior.
+*/
+const demoArchivada =
+  MODO_ALMACEN === 'postgres'
+    ? archivarDemo({ pool, confirmar: process.env.ARCHIVAR_DEMO })
+        .catch(error => {
+          console.error('NO SE ARRANCA:', error.message);
+          process.exit(1);
+        })
+    : Promise.resolve();
+
 const postgresAdministrativoListo =
-  initPostgres()
+  demoArchivada.then(() => initPostgres())
     .catch(error => {
 
       console.error(
@@ -12020,6 +12039,19 @@ process.on(
 
 
 prepararAlmacen()
+  .then(() =>
+    /* Cuenta del propietario de la barbería principal (solo si aún no tiene). */
+    plataforma
+      ? propietarioInicial({
+          pool,
+          autenticacion,
+          negocio: DEFAULT_BUSINESS_ID,
+          email: process.env.PROPIETARIO_INICIAL_EMAIL,
+          clave: process.env.PROPIETARIO_INICIAL_CLAVE,
+          nombre: process.env.PROPIETARIO_INICIAL_NOMBRE || ''
+        })
+      : null
+  )
   .then(() => {
 
     app.listen(
