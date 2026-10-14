@@ -78,12 +78,12 @@ test.describe('Fase 4 · verificación de correo', { skip: omitir }, () => {
     assert.equal((await s.pedir('POST', '/api/auth/verificar', { token: segundo }, { cookie: null })).status, 200);
   });
 
-  test('una invitación confirma el correo al crear la contraseña', async () => {
+  test('aceptar una invitación confirma el correo al crear la contraseña', async () => {
     const correo = `invitado-${unico()}@prueba.test`;
     const desde = s.logs.length;
     assert.equal((await s.pedir('POST', '/api/admin/usuarios', { email: correo, role: 'staff' })).status, 201);
-    const token = await enlace(s, correo, 'restablecer', desde);
-    assert.equal((await s.pedir('POST', '/api/auth/restablecer', { token, password: CLAVE }, { cookie: null })).status, 200);
+    const token = await enlace(s, correo, 'invitacion', desde);
+    assert.equal((await s.pedir('POST', '/api/auth/invitacion/aceptar', { token, name: 'Invitado', password: CLAVE }, { cookie: null })).status, 200);
     assert.equal((await s.pedir('POST', '/api/auth/login', { email: correo, password: CLAVE }, { cookie: null })).status, 200);
   });
 
@@ -94,9 +94,9 @@ test.describe('Fase 4 · verificación de correo', { skip: omitir }, () => {
 });
 
 test.describe('Fase 4 · registro y dos pasos en producción', { skip: omitir }, () => {
-  test('en producción el registro está cerrado por defecto y se puede abrir explícitamente', async () => {
+  test('en producción el registro está cerrado: sin correo configurado no se abre ni con REGISTRO_ABIERTO=1', async () => {
     const prod = await iniciarServidor({ postgres: true, env: { RENDER: 'true' } });
-    const abierto = await iniciarServidor({ postgres: true, env: { RENDER: 'true', REGISTRO_ABIERTO: '1', CLAVE_DOS_PASOS: 'clave-de-prueba-larga-y-aleatoria' } });
+    const pedido = await iniciarServidor({ postgres: true, env: { RENDER: 'true', REGISTRO_ABIERTO: '1', CLAVE_DOS_PASOS: 'clave-de-prueba-larga-y-aleatoria' } });
     const cerrado = await iniciarServidor({ postgres: true, env: { REGISTRO_ABIERTO: '0' } });
     try {
       const datos = { businessName: 'Prod ' + unico(), name: 'Ana', email: `prod-${unico()}@prueba.test`, password: CLAVE };
@@ -108,16 +108,22 @@ test.describe('Fase 4 · registro y dos pasos en producción', { skip: omitir },
 
       assert.equal((await cerrado.pedir('POST', '/api/auth/registro', { ...datos, email: `c-${unico()}@prueba.test` }, { cookie: null })).status, 403);
 
-      const desde = abierto.logs.length;
-      const r = await abierto.pedir('POST', '/api/auth/registro', { ...datos, businessName: 'Abierto ' + unico(), email: `a-${unico()}@prueba.test` }, { cookie: null });
-      assert.equal(r.status, 201);
-      assert.equal((await abierto.pedir('GET', '/api/auth/config', undefined, { cookie: null })).json.twoFactorAvailable, true);
+      /* REGISTRO_ABIERTO=1 sin correo: sigue cerrado y lo avisa al arrancar. */
+      assert.equal((await pedido.pedir('POST', '/api/auth/registro', { ...datos, email: `a-${unico()}@prueba.test` }, { cookie: null })).status, 403);
+      assert.equal((await pedido.pedir('GET', '/api/auth/config', undefined, { cookie: null })).json.registrationOpen, false);
+      assert.ok(pedido.logs.some(l => /REGISTRO_ABIERTO=1 pero el correo no está configurado/.test(l)));
+      assert.equal((await pedido.pedir('GET', '/api/auth/config', undefined, { cookie: null })).json.twoFactorAvailable, true);
+
+      /* Sin correo en producción, los enlaces nunca aparecen en los registros. */
+      const desde = pedido.logs.length;
+      assert.equal((await pedido.pedir('POST', '/api/auth/recuperar', { email: pedido.correo }, { cookie: null })).status, 200);
+      assert.equal((await pedido.pedir('POST', '/api/admin/usuarios', { email: `inv-${unico()}@prueba.test`, role: 'staff' })).json.emailSent, false);
       await new Promise(res => setTimeout(res, 200));
-      const registros = abierto.logs.slice(desde).join('\n');
-      assert.ok(!/verificar=|restablecer=/.test(registros), 'en producción el enlace nunca aparece en los registros');
+      const registros = pedido.logs.slice(desde).join('\n');
+      assert.ok(!/verificar=|restablecer=|invitacion=/.test(registros), 'en producción el enlace nunca aparece en los registros');
       assert.match(registros, /correo no configurado/);
     } finally {
-      for (const x of [prod, abierto, cerrado]) { await x.detener(); x.borrar(); }
+      for (const x of [prod, pedido, cerrado]) { await x.detener(); x.borrar(); }
     }
   });
 });
@@ -230,7 +236,7 @@ test('aislamiento: los usuarios y la seguridad de una barbería no son visibles 
       assert.equal((await s.pedir('PATCH', `/api/admin/usuarios/${propietarioA.id}`, cambio, { cookie: b })).status, 404);
     }
     assert.equal((await s.pedir('POST', '/api/admin/usuarios', { email: s.correo, role: 'owner', businessId: s.negocio }, { cookie: b })).status, 201,
-      'B puede invitar ese correo a B…');
+      'B puede invitar ese correo a B (queda pendiente)…');
     const sesionA = (await s.pedir('GET', '/api/auth/sesion')).json;
     assert.equal(sesionA.role, 'owner');
     assert.equal(sesionA.business.id, s.negocio, '…pero eso no le da acceso a A ni cambia la sesión de A');

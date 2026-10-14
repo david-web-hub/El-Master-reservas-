@@ -270,14 +270,16 @@ test.describe('Fase 3 · seguridad', { skip: omitir }, () => {
     for (const [rol, extra] of [['admin', {}], ['staff', {}], ['barber', { barberId: 'master' }]]) {
       const r = await s.pedir('POST', '/api/admin/usuarios', { email: correo(rol), name: rol, role: rol, ...extra });
       assert.equal(r.status, 201, r.texto);
-      assert.equal(r.json.user.role, rol);
+      assert.equal(r.json.invitation.role, rol);
     }
-    /* Las invitaciones llegan como enlace para crear contraseña. */
+    /* Las invitaciones llegan como enlace: la persona crea su contraseña y acepta. */
     const cookies = {};
     for (const rol of ['admin', 'staff', 'barber']) {
-      const token = await enlaceDeCorreo(s, correo(rol), desde);
-      assert.equal((await s.pedir('POST', '/api/auth/restablecer', { token, password: CLAVE }, { cookie: null })).status, 200);
-      cookies[rol] = cookieDe(await s.pedir('POST', '/api/auth/login', { email: correo(rol), password: CLAVE }, { cookie: null }));
+      const linea = await s.esperarLog(new RegExp(`\\[DEMO CORREO\\] ${correo(rol).replace(/[.+]/g, '\\$&')} `), 5000, desde);
+      const token = linea.match(/invitacion=([A-Za-z0-9_-]+)/)[1];
+      const acepta = await s.pedir('POST', '/api/auth/invitacion/aceptar', { token, name: 'Persona ' + rol, password: CLAVE }, { cookie: null });
+      assert.equal(acepta.status, 200, acepta.texto);
+      cookies[rol] = cookieDe(acepta);
     }
     assert.equal((await s.pedir('POST', '/api/admin/usuarios', { email: `x-${unico()}@prueba.test`, role: 'barber' })).status, 400, 'barbero sin ficha');
 

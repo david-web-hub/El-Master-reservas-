@@ -7971,6 +7971,8 @@ $('reportTo').value =
 
 let currentSession = null;
 let teamUsers = [];
+let teamInvitations = [];
+let avisoInvitacionesMostrado = false;
 let redirigiendoAcceso = false;
 
 const ROLE_NAMES = {
@@ -8025,6 +8027,21 @@ async function loadSession() {
     currentSession = null;
   }
   renderSessionUi();
+  avisarInvitaciones();
+}
+
+/* Si otra barbería invitó a esta persona, se avisa una vez. */
+async function avisarInvitaciones() {
+  if (!currentSession || currentSession.local || avisoInvitacionesMostrado) return;
+  try {
+    const data = await request('/api/auth/invitaciones');
+    if ((data.invitations || []).length) {
+      avisoInvitacionesMostrado = true;
+      toast('Tienes invitaciones pendientes en Configuración → Mi cuenta.');
+    }
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 function renderSessionUi() {
@@ -8073,12 +8090,17 @@ async function renderAccountSettings() {
   const user = currentSession?.user || {};
   const local = !currentSession || currentSession.local;
   let twoFactor = { available: false, enabled: false, recoveryCodesLeft: 0 };
+  let invitations = [];
+  let businesses = [];
   if (!local) {
-    try {
-      twoFactor = await request('/api/auth/2fa');
-    } catch (error) {
-      console.error(error);
-    }
+    const [a, b, c] = await Promise.allSettled([
+      request('/api/auth/2fa'),
+      request('/api/auth/invitaciones'),
+      request('/api/auth/barberias')
+    ]);
+    if (a.status === 'fulfilled') twoFactor = a.value;
+    if (b.status === 'fulfilled') invitations = b.value.invitations || [];
+    if (c.status === 'fulfilled') businesses = c.value.businesses || [];
   }
 
   $('settingContent').innerHTML = `
@@ -8094,6 +8116,38 @@ async function renderAccountSettings() {
     </div>
 
     ${local ? '<p class="label">Modo local sin PostgreSQL: las cuentas no están disponibles.</p>' : `
+    ${invitations.length ? `
+    <div class="card account-block" id="myInvitations">
+      <h3>Invitaciones pendientes</h3>
+      <p class="label">No tendrás acceso a otra barbería hasta que aceptes su invitación.</p>
+      ${invitations.map(inv => `
+        <div class="barber-card">
+          <div class="thumb user-avatar">✉</div>
+          <div style="flex:1;min-width:0">
+            <strong>${esc(inv.businessName)}</strong>
+            <span class="badge badge-gold">${esc(inv.roleName || '')}</span>
+            <div class="label">${inv.invitedBy ? 'Invitación de ' + esc(inv.invitedBy) + ' · ' : ''}Vence: ${esc(new Date(inv.expiresAt).toLocaleDateString('es-EC'))}</div>
+            <div class="actions">
+              <button class="btn btn-gold" onclick="respondInvitation('${esc(inv.id)}', true)">Aceptar</button>
+              <button class="btn btn-danger" onclick="respondInvitation('${esc(inv.id)}', false)">Rechazar</button>
+            </div>
+          </div>
+        </div>`).join('')}
+    </div>` : ''}
+
+    ${businesses.length > 1 ? `
+    <div class="card account-block" id="myBusinesses">
+      <h3>Mis barberías</h3>
+      <p class="label">Tienes acceso a varias barberías. Cada una tiene sus propios datos.</p>
+      ${businesses.map(item => `
+        <div class="switch-row">
+          <div><strong>${esc(item.name)}</strong><div class="label">${esc(ROLE_NAMES[item.role] || item.role)}</div></div>
+          ${item.current
+            ? '<span class="badge badge-green">Actual</span>'
+            : `<button class="btn btn-dark" onclick="switchBusiness('${esc(item.id)}')">Entrar</button>`}
+        </div>`).join('')}
+    </div>` : ''}
+
     <div class="card account-block">
       <h3>Cambiar contraseña</h3>
       <p class="label">Al cambiarla se cierran tus sesiones en otros dispositivos.</p>
@@ -8211,15 +8265,43 @@ async function disableTwoFactor() {
   }
 }
 
+async function respondInvitation(id, accept) {
+  try {
+    const data = await request(`/api/auth/invitaciones/${encodeURIComponent(id)}/${accept ? 'aceptar' : 'rechazar'}`, {
+      method: 'POST', headers: JSON_HEADERS, body: '{}'
+    });
+    toast(accept
+      ? `Ahora tienes acceso a ${data.business?.name || 'la barbería'}. Puedes entrar desde «Mis barberías».`
+      : 'Invitación rechazada.');
+    renderAccountSettings();
+  } catch (error) {
+    toast(error.message, true);
+    renderAccountSettings();
+  }
+}
+
+async function switchBusiness(id) {
+  try {
+    await request('/api/auth/cambiar-barberia', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ businessId: id })
+    });
+    location.replace('/admin.html');
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
 /* ---------- Usuarios y roles ---------- */
 async function loadUserSettings() {
   try {
-    const [usersData, barbersData] = await Promise.all([
+    const [usersData, barbersData, invitationsData] = await Promise.all([
       request('/api/admin/usuarios'),
-      request(API.barbers)
+      request(API.barbers),
+      request('/api/admin/invitaciones')
     ]);
     teamUsers = usersData.users || [];
     allBarbers = barbersData.barbers || [];
+    teamInvitations = invitationsData.invitations || [];
     renderUserSettings();
   } catch (error) {
     $('settingContent').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
@@ -8252,12 +8334,33 @@ function renderUserSettings() {
       </div>`;
   }).join('');
 
+  const invitationCards = teamInvitations.map(inv => `
+      <div class="barber-card">
+        <div class="thumb user-avatar">✉</div>
+        <div style="flex:1;min-width:0">
+          <strong>${esc(inv.name || inv.email)}</strong>
+          <span class="badge badge-gold">${esc(ROLE_NAMES[inv.role] || inv.role)}</span>
+          <span class="badge ${inv.expired ? 'badge-red' : 'badge-gold'}">${inv.expired ? 'Vencida' : 'Pendiente'}</span>
+          <div class="label">${esc(inv.email)}</div>
+          <div class="label">${inv.expired ? 'Venció' : 'Vence'}: ${esc(new Date(inv.expiresAt).toLocaleDateString('es-EC'))}</div>
+          ${manage ? `
+          <div class="actions">
+            <button class="btn btn-dark" onclick="resendInvitation('${esc(inv.id)}')">Reenviar</button>
+            <button class="btn btn-danger" onclick="revokeInvitation('${esc(inv.id)}')">Cancelar invitación</button>
+          </div>` : ''}
+        </div>
+      </div>`).join('');
+
   $('settingContent').innerHTML = `
     ${manage ? `
     <div class="toolbar" style="justify-content:flex-end;margin-bottom:8px">
-      <button class="btn btn-gold" onclick="openUserModal()">+ Agregar usuario</button>
-    </div>` : '<p class="label">Solo un propietario puede agregar o cambiar usuarios.</p>'}
+      <button class="btn btn-gold" onclick="openUserModal()">+ Invitar usuario</button>
+    </div>` : '<p class="label">Solo un propietario puede invitar o cambiar usuarios.</p>'}
     ${cards || '<div class="empty">Todavía no hay usuarios.</div>'}
+    ${invitationCards ? `
+    <h3 style="margin:22px 0 4px">Invitaciones pendientes</h3>
+    <p class="label">La persona obtiene acceso solo cuando acepta la invitación.</p>
+    <div id="pendingInvitations">${invitationCards}</div>` : ''}
     <div class="chips" style="margin-top:14px">
       ${Object.keys(ROLE_NAMES).map(role => `<span class="chip"><strong>${ROLE_NAMES[role]}:</strong> ${ROLE_HELP[role]}</span>`).join('')}
     </div>
@@ -8282,7 +8385,7 @@ function toggleBarberField() {
 
 function openUserModal(id = null) {
   const user = teamUsers.find(item => item.id === id) || {};
-  $('modalTitle').textContent = id ? 'Cambiar rol' : 'Agregar usuario';
+  $('modalTitle').textContent = id ? 'Cambiar rol' : 'Invitar usuario';
   $('modalContent').innerHTML = `
     <div class="form-grid">
       ${id ? `
@@ -8297,7 +8400,7 @@ function openUserModal(id = null) {
       <div class="field" id="usBarberField"><label>Barbero de esta cuenta</label>
         <select class="select" id="usBarber">${barberOptions(user.barberId)}</select></div>
     </div>
-    ${id ? '' : '<p class="label">Recibirá un correo con un enlace para crear su contraseña.</p>'}
+    ${id ? '' : '<p class="label">Recibirá un correo con un enlace para aceptar o rechazar la invitación. No tendrá acceso hasta que la acepte.</p>'}
     <button class="btn btn-gold" id="saveUserBtn" style="width:100%;margin-top:14px"
       onclick="saveUser('${esc(id || '')}')">${id ? 'Guardar cambios' : 'Enviar invitación'}</button>
   `;
@@ -8316,16 +8419,43 @@ async function saveUser(id) {
   const button = $('saveUserBtn');
   button.disabled = true;
   try {
-    await request(id ? `/api/admin/usuarios/${encodeURIComponent(id)}` : '/api/admin/usuarios', {
+    const data = await request(id ? `/api/admin/usuarios/${encodeURIComponent(id)}` : '/api/admin/usuarios', {
       method: id ? 'PATCH' : 'POST', headers: JSON_HEADERS, body: JSON.stringify(body)
     });
     closeModal();
-    toast(id ? 'Rol actualizado.' : 'Invitación enviada.');
+    if (id) toast('Rol actualizado.');
+    else if (data.emailSent === false) toast('Invitación creada, pero no se pudo enviar el correo. Usa «Reenviar».', true);
+    else toast('Invitación enviada.');
     await loadUserSettings();
   } catch (error) {
     toast(error.message, true);
   } finally {
     button.disabled = false;
+  }
+}
+
+async function resendInvitation(id) {
+  try {
+    const data = await request(`/api/admin/invitaciones/${encodeURIComponent(id)}/reenviar`, {
+      method: 'POST', headers: JSON_HEADERS, body: '{}'
+    });
+    if (data.emailSent === false) toast('No se pudo enviar el correo. Inténtalo más tarde.', true);
+    else toast('Invitación reenviada.');
+    await loadUserSettings();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function revokeInvitation(id) {
+  try {
+    await request(`/api/admin/invitaciones/${encodeURIComponent(id)}/revocar`, {
+      method: 'POST', headers: JSON_HEADERS, body: '{}'
+    });
+    toast('Invitación cancelada.');
+    await loadUserSettings();
+  } catch (error) {
+    toast(error.message, true);
   }
 }
 

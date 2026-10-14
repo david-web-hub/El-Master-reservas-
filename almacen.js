@@ -327,6 +327,32 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-fase5-001',
+  descripcion: 'Invitaciones con aceptación expresa',
+  sql: `
+    CREATE TABLE IF NOT EXISTS invitations (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      business_id TEXT NOT NULL REFERENCES businesses(id),
+      email TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff', 'barber')),
+      barber_id TEXT,
+      invited_by TEXT REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'revoked')),
+      expires_at TIMESTAMPTZ NOT NULL,
+      responded_at TIMESTAMPTZ,
+      accepted_user_id TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    /* Una sola invitación pendiente por barbería y correo. */
+    CREATE UNIQUE INDEX IF NOT EXISTS invitations_pendiente_key
+      ON invitations (business_id, lower(email)) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS invitations_email_idx ON invitations (lower(email));
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 

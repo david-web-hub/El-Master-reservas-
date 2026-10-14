@@ -66,10 +66,17 @@ function esProduccion() {
 */
 function registroAbierto() {
 
-  if (process.env.REGISTRO_ABIERTO === '1') return true;
   if (process.env.REGISTRO_ABIERTO === '0') return false;
 
-  return !esProduccion();
+  /*
+    En producción, además de REGISTRO_ABIERTO=1, el correo tiene que estar
+    configurado: sin él nadie podría confirmar su cuenta.
+  */
+  if (esProduccion()) {
+    return process.env.REGISTRO_ABIERTO === '1' && correoListo();
+  }
+
+  return true;
 
 }
 
@@ -424,6 +431,8 @@ const REGLAS_PERMISO = [
   ['GET', /^\/api\/admin\/backup$/, ['respaldo']],
   ['GET', /^\/api\/admin\/usuarios$/, ['usuarios.ver']],
   ['*', /^\/api\/admin\/usuarios(\/|$)/, ['usuarios']],
+  ['GET', /^\/api\/admin\/invitaciones$/, ['usuarios.ver']],
+  ['*', /^\/api\/admin\/invitaciones(\/|$)/, ['usuarios']],
   ['GET', /^\/api\/admin\/(services|business|barbers|settings|hours|media)$/, ['panel']],
   ['*', /^\/api\/admin\/(services|business|barbers|settings|hours|media)(\/|$)/, ['configuracion']]
 ];
@@ -843,53 +852,33 @@ function nuevoIdReserva() {
    producción no se envía ni se muestra el enlace.
 ========================================================= */
 
-async function enviarCorreo({ para, asunto, texto, enlace }) {
+const { crearCorreo } = require('./correo');
 
-  if (
-    process.env.RESEND_API_KEY &&
-    process.env.CORREO_REMITENTE
-  ) {
+const correo =
+  crearCorreo({
+    apiKey: process.env.RESEND_API_KEY || '',
+    remitente: process.env.CORREO_REMITENTE || '',
+    responderA: process.env.CORREO_RESPONDER_A || '',
+    /* Solo para pruebas controladas: apuntar a un servidor falso en lugar de Resend. */
+    apiUrl: process.env.RESEND_API_URL || 'https://api.resend.com/emails',
+    produccion: esProduccion(),
+    vistaPreviaDir: esProduccion() ? '' : (process.env.CORREO_VISTA_PREVIA_DIR || ''),
+    timeoutMs: Number(process.env.CORREO_TIEMPO_LIMITE_MS) || 10000
+  });
 
-    const r =
-      await fetch(
-        'https://api.resend.com/emails',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            from: process.env.CORREO_REMITENTE,
-            to: [para],
-            subject: asunto,
-            text: texto
-          })
-        }
-      );
+function enviarCorreo(mensaje) {
 
-    if (!r.ok) {
-      console.error('ERROR ENVIANDO CORREO:', r.status);
-    }
+  return correo.enviar(mensaje);
 
-    return;
-
-  }
+}
 
 
-  if (esProduccion()) {
+/* El correo está listo para producción: credenciales y dirección pública. */
+function correoListo() {
 
-    console.warn(
-      'AVISO: correo no configurado; no se envió el mensaje de recuperación.'
-    );
-
-    return;
-
-  }
-
-
-  console.log(
-    `[DEMO CORREO] ${para} ${enlace}`
+  return (
+    correo.configurado &&
+    Boolean(process.env.PUBLIC_BASE_URL)
   );
 
 }
@@ -11005,6 +10994,7 @@ app.post('/api/auth/registro', async (req, res) => {
     res.status(201).json({
       ok: true,
       verificationRequired: r.verificacionPendiente,
+      emailSent: r.correoEnviado,
       user: r.usuario,
       business: r.negocio,
       role: r.rol
@@ -11345,15 +11335,165 @@ app.post('/api/admin/usuarios', async (req, res) => {
 
   try {
 
-    const usuario =
-      await autenticacion.agregarUsuario(sesionActual(), req.body || {}, readDb(), datosCliente(req));
+    const r =
+      await autenticacion.invitarUsuario(sesionActual(), req.body || {}, readDb(), datosCliente(req));
 
-    res.status(201).json({ ok: true, user: usuario });
+    res.status(201).json({ ok: true, invitation: r.invitacion, emailSent: r.correoEnviado });
 
   } catch (error) {
 
     responderErrorAuth(res, error, 'AGREGANDO USUARIO');
 
+  }
+
+});
+
+app.get('/api/admin/invitaciones', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    res.json({ ok: true, invitations: await autenticacion.listarInvitaciones(negocioActual()) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'LISTANDO INVITACIONES');
+  }
+
+});
+
+app.post('/api/admin/invitaciones/:id/reenviar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    const r = await autenticacion.reenviarInvitacion(sesionActual(), req.params.id, datosCliente(req));
+    res.json({ ok: true, invitation: r.invitacion, emailSent: r.correoEnviado });
+  } catch (error) {
+    responderErrorAuth(res, error, 'REENVIANDO INVITACIÓN');
+  }
+
+});
+
+app.post('/api/admin/invitaciones/:id/revocar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    await autenticacion.revocarInvitacion(sesionActual(), req.params.id, datosCliente(req));
+    res.json({ ok: true });
+  } catch (error) {
+    responderErrorAuth(res, error, 'REVOCANDO INVITACIÓN');
+  }
+
+});
+
+
+/* ---------------- INVITACIONES (persona invitada) ---------------- */
+
+app.post('/api/auth/invitacion/consultar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, invitation: await autenticacion.consultarInvitacion(req.body?.token, datosCliente(req)) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'CONSULTANDO INVITACIÓN');
+  }
+
+});
+
+app.post('/api/auth/invitacion/aceptar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    const b = req.body || {};
+    const r = await autenticacion.aceptarInvitacion(
+      b.token, { name: b.name, password: b.password, code: b.code }, datosCliente(req));
+
+    if (req.tokenSesion) {
+      await autenticacion.cerrarSesion(req.tokenSesion).catch(() => {});
+    }
+
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+    res.json({ ok: true, user: r.usuario, business: r.negocio, role: r.rol });
+  } catch (error) {
+    responderErrorAuth(res, error, 'ACEPTANDO INVITACIÓN');
+  }
+
+});
+
+app.post('/api/auth/invitacion/rechazar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    await autenticacion.rechazarInvitacion(req.body?.token, datosCliente(req));
+    res.json({ ok: true });
+  } catch (error) {
+    responderErrorAuth(res, error, 'RECHAZANDO INVITACIÓN');
+  }
+
+});
+
+app.get('/api/auth/invitaciones', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    res.json({ ok: true, invitations: await autenticacion.misInvitaciones(sesion) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'LISTANDO MIS INVITACIONES');
+  }
+
+});
+
+app.post('/api/auth/invitaciones/:id/:accion', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  if (!['aceptar', 'rechazar'].includes(req.params.accion)) {
+    return res.status(404).json({ ok: false, error: 'Ruta API no encontrada' });
+  }
+
+  try {
+    const r = await autenticacion.responderMiInvitacion(
+      sesion, req.params.id, req.params.accion === 'aceptar', datosCliente(req));
+    res.json({ ok: true, business: { id: r.businessId, name: r.businessName } });
+  } catch (error) {
+    responderErrorAuth(res, error, 'RESPONDIENDO INVITACIÓN');
+  }
+
+});
+
+/* Barberías de la sesión y cambio entre ellas (misma persona). */
+app.get('/api/auth/barberias', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    const lista = await autenticacion.negociosDeUsuario(sesion.usuario.id);
+    res.json({ ok: true, businesses: lista.map(n => ({ id: n.id, name: n.name, role: n.role, current: n.id === sesion.negocio.id })) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'LISTANDO BARBERÍAS');
+  }
+
+});
+
+app.post('/api/auth/cambiar-barberia', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    const r = await autenticacion.cambiarNegocio(sesion, req.tokenSesion, req.body?.businessId, datosCliente(req));
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+    res.json({ ok: true, business: r.negocio, role: r.rol });
+  } catch (error) {
+    responderErrorAuth(res, error, 'CAMBIANDO DE BARBERÍA');
   }
 
 });
@@ -11693,6 +11833,17 @@ prepararAlmacen()
         console.log(
           `Barbería: http://localhost:${PORT}`
         );
+
+        if (
+          esProduccion() &&
+          process.env.REGISTRO_ABIERTO === '1' &&
+          !correoListo()
+        ) {
+          console.warn(
+            'AVISO: REGISTRO_ABIERTO=1 pero el correo no está configurado ' +
+            '(RESEND_API_KEY, CORREO_REMITENTE, PUBLIC_BASE_URL): el registro sigue cerrado.'
+          );
+        }
 
         console.log(
           'EL MÁSTER RESERVAS INICIADO'

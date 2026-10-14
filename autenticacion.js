@@ -304,10 +304,13 @@ function crearAutenticacion({
       await evento(client, 'registro', { userId, businessId: negocio.id, ip });
       await client.query('COMMIT');
       await almacen.cargarNegocio(negocio.id);
-      if (tokenVerificacion) await enviarVerificacion(correo, nombre, tokenVerificacion);
+      const correoEnviado = tokenVerificacion
+        ? await enviarVerificacion(correo, nombre, tokenVerificacion, negocio.name)
+        : true;
       return {
         token,
         verificacionPendiente: Boolean(tokenVerificacion),
+        correoEnviado,
         usuario: { id: userId, email: correo, name: nombre },
         negocio,
         rol: 'owner'
@@ -422,6 +425,21 @@ function crearAutenticacion({
     if (r.rowCount) await evento(null, 'logout', { userId: r.rows[0].user_id, businessId: r.rows[0].business_id, ip });
   }
 
+  /*
+    Revisa un enlace de un solo uso y explica por qué no sirve, si es el caso.
+    Las filas se buscan solo por el resumen del código.
+  */
+  async function revisarEnlace(cliente, tabla, token, nombre) {
+    const r = await (cliente || pool).query(
+      `SELECT *, expires_at <= NOW() AS vencido FROM ${tabla} WHERE token_hash = $1 FOR UPDATE`,
+      [resumen(String(token || ''))]);
+    const fila = r.rows[0];
+    if (!fila) throw new ErrorAuth(400, 'ENLACE_INVALIDO', `El enlace de ${nombre} no es válido. Revisa que esté completo o pide uno nuevo.`);
+    if (fila.used_at) throw new ErrorAuth(400, 'ENLACE_USADO', `Este enlace de ${nombre} ya se usó. Si lo necesitas, pide uno nuevo.`);
+    if (fila.vencido) throw new ErrorAuth(400, 'ENLACE_VENCIDO', `Este enlace de ${nombre} venció. Pide uno nuevo.`);
+    return fila;
+  }
+
   /* ---------------- RECUPERACIÓN ---------------- */
   async function solicitarRecuperacion(email, { ip } = {}) {
     limitar('recuperar', ip);
@@ -442,22 +460,18 @@ function crearAutenticacion({
       [resumen(token), u.id, ip || null]);
     await evento(null, 'recuperacion_solicitada', { userId: u.id, ip });
     const enlace = `${urlBase()}/acceso.html#restablecer=${token}`;
-    await enviarCorreo({
+    const envio = await enviarCorreo({
       para: u.email,
-      asunto: 'Restablece tu contraseña de Master Reservas',
-      texto: `Hola ${u.name || ''}:\n\nPara crear una nueva contraseña abre este enlace (válido 1 hora, un solo uso):\n${enlace}\n\nSi no lo pediste, ignora este mensaje: tu contraseña no cambia.`,
-      enlace
+      plantilla: 'recuperacion',
+      datos: { nombre: u.name, enlace, vence: '1 hora' }
     });
+    if (!envio.ok) await evento(null, 'correo_fallido', { userId: u.id, ip, detalle: { plantilla: 'recuperacion', error: envio.error } });
   }
 
   async function restablecerClave(token, nuevaClave, { ip } = {}) {
     limitar('restablecer', ip);
-    const r = await pool.query(
-      `SELECT p.user_id, u.email, u.name FROM password_resets p JOIN users u ON u.id = p.user_id
-       WHERE p.token_hash = $1 AND p.used_at IS NULL AND p.expires_at > NOW()`,
-      [resumen(String(token || ''))]);
-    const fila = r.rows[0];
-    if (!fila) throw new ErrorAuth(400, 'ENLACE_INVALIDO', 'El enlace no es válido o ya venció. Pide uno nuevo.');
+    const enlace = await revisarEnlace(null, 'password_resets', token, 'contraseña');
+    const fila = (await pool.query('SELECT id AS user_id, email, name FROM users WHERE id = $1', [enlace.user_id])).rows[0];
     const clave = validarClave(nuevaClave, { correo: fila.email, nombre: fila.name });
     const hash = await cifrarClave(clave);
     const client = await pool.connect();
@@ -465,7 +479,7 @@ function crearAutenticacion({
       await client.query('BEGIN');
       const usado = await client.query(
         'UPDATE password_resets SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL', [resumen(String(token))]);
-      if (!usado.rowCount) throw new ErrorAuth(400, 'ENLACE_INVALIDO', 'El enlace ya se utilizó');
+      if (!usado.rowCount) throw new ErrorAuth(400, 'ENLACE_USADO', 'Este enlace de contraseña ya se usó. Si lo necesitas, pide uno nuevo.');
       await client.query(
         `UPDATE users SET password_hash = $2, password_changed_at = NOW(), failed_attempts = 0, locked_until = NULL,
                 email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW() WHERE id = $1`, [fila.user_id, hash]);
@@ -506,25 +520,36 @@ function crearAutenticacion({
     return token;
   }
 
-  async function enviarVerificacion(correo, nombre, token) {
+  /* Devuelve true si el correo salió (o se mostró en modo demostración). */
+  async function enviarVerificacion(correo, nombre, token, negocio) {
     const enlace = `${urlBase()}/acceso.html#verificar=${token}`;
-    await enviarCorreo({
+    const envio = await enviarCorreo({
       para: correo,
-      asunto: 'Confirma tu correo en Master Reservas',
-      texto: `Hola ${nombre || ''}:\n\nConfirma tu correo para activar tu cuenta (enlace válido 24 horas):\n${enlace}\n\nSi no creaste esta cuenta, ignora este mensaje.`,
-      enlace
+      plantilla: 'confirmacion',
+      datos: { nombre, negocio, enlace, vence: '24 horas' }
     });
+    if (!envio.ok) await evento(null, 'correo_fallido', { detalle: { plantilla: 'confirmacion', error: envio.error } });
+    return envio.ok;
   }
 
   async function confirmarCorreo(token, { ip } = {}) {
     limitar('verificar', ip);
-    const r = await pool.query(
-      `UPDATE email_verifications SET used_at = NOW()
-       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW() RETURNING user_id`,
-      [resumen(String(token || ''))]);
-    if (!r.rowCount) throw new ErrorAuth(400, 'ENLACE_INVALIDO', 'El enlace no es válido o ya venció. Pide uno nuevo.');
-    await pool.query('UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW() WHERE id = $1', [r.rows[0].user_id]);
-    await evento(null, 'correo_verificado', { userId: r.rows[0].user_id, ip });
+    const client = await pool.connect();
+    let userId;
+    try {
+      await client.query('BEGIN');
+      const fila = await revisarEnlace(client, 'email_verifications', token, 'confirmación');
+      userId = fila.user_id;
+      await client.query('UPDATE email_verifications SET used_at = NOW() WHERE token_hash = $1', [fila.token_hash]);
+      await client.query('UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW() WHERE id = $1', [userId]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    await evento(null, 'correo_verificado', { userId, ip });
   }
 
   /* Misma respuesta exista o no la cuenta. */
@@ -537,7 +562,7 @@ function crearAutenticacion({
       [correo])).rows[0];
     if (!u) return;
     const token = await crearVerificacion(pool, u.id);
-    await enviarVerificacion(u.email, u.name, token);
+    await enviarVerificacion(u.email, u.name, token, null);
     await evento(null, 'verificacion_reenviada', { userId: u.id, ip });
   }
 
@@ -675,36 +700,79 @@ function crearAutenticacion({
     }
   }
 
-  /*
-    Agrega a una persona a la barbería. Si no tiene cuenta, se crea sin
-    contraseña y recibe un enlace para crearla (el mismo de recuperación).
+  /* ---------------- INVITACIONES ----------------
+     Nadie obtiene acceso a una barbería sin aceptar expresamente:
+     - Con el enlace del correo (un solo uso, 7 días): quien no tiene cuenta
+       crea su contraseña; quien ya la tiene confirma con su contraseña (y su
+       código de dos pasos si lo usa).
+     - Desde «Mi cuenta», si ya inició sesión con ese mismo correo.
+     La barbería puede reenviar o revocar mientras esté pendiente.
   */
-  async function agregarUsuario(sesion, datos = {}, db, { ip } = {}) {
+  const DIAS_INVITACION = 7;
+  const nuevoIdInvitacion = () => 'inv_' + crypto.randomBytes(10).toString('hex');
+
+  function resumenInvitacion(x) {
+    return {
+      id: x.id, email: x.email, name: x.name, role: x.role, roleName: NOMBRES_ROL[x.role],
+      barberId: x.barber_id, status: x.status, expiresAt: x.expires_at, createdAt: x.created_at,
+      expired: new Date(x.expires_at) <= new Date()
+    };
+  }
+
+  async function enviarInvitacion(inv, token, { cuentaExiste }) {
+    const datos = (await pool.query(
+      `SELECT b.name AS negocio, u.name AS invitante
+       FROM businesses b LEFT JOIN users u ON u.id = $2 WHERE b.id = $1`, [inv.business_id, inv.invited_by])).rows[0] || {};
+    const envio = await enviarCorreo({
+      para: inv.email,
+      plantilla: 'invitacion',
+      datos: {
+        nombre: inv.name, negocio: datos.negocio, invitante: datos.invitante,
+        rol: NOMBRES_ROL[inv.role], cuentaExiste,
+        enlace: `${urlBase()}/acceso.html#invitacion=${token}`, vence: `${DIAS_INVITACION} días`
+      }
+    });
+    if (!envio.ok) {
+      await evento(null, 'correo_fallido', { businessId: inv.business_id, detalle: { plantilla: 'invitacion', error: envio.error, invitacion: inv.id } });
+    }
+    return envio.ok;
+  }
+
+  async function invitarUsuario(sesion, datos = {}, db, { ip } = {}) {
+    limitar('invitar', ip);
     const correo = validarCorreo(datos.email);
     const nombre = String(datos.name || '').trim().slice(0, 120);
     const rol = String(datos.role || '');
-    const barberId = datos.barberId ? String(datos.barberId) : null;
+    const barberId = rol === 'barber' && datos.barberId ? String(datos.barberId) : null;
     validarRol(rol, barberId, db);
-    if (rol === 'owner' && sesion.rol !== 'owner') throw new ErrorAuth(403, 'SIN_PERMISO', 'Solo un propietario puede agregar propietarios');
+    if (rol === 'owner' && sesion.rol !== 'owner') throw new ErrorAuth(403, 'SIN_PERMISO', 'Solo un propietario puede invitar propietarios');
+    const token = tokenAleatorio();
     const client = await pool.connect();
-    let creado = false;
-    let userId;
+    let inv;
+    let cuentaExiste = false;
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['master-reservas:correo:' + correo]);
-      const ex = await client.query('SELECT id FROM users WHERE lower(email) = $1', [correo]);
-      if (ex.rowCount) {
-        userId = ex.rows[0].id;
-      } else {
-        userId = nuevoId();
-        creado = true;
-        await client.query('INSERT INTO users (id, email, name) VALUES ($1, $2, $3)', [userId, correo, nombre]);
+      const u = (await client.query('SELECT id, password_hash FROM users WHERE lower(email) = $1', [correo])).rows[0];
+      cuentaExiste = Boolean(u && u.password_hash);
+      if (u) {
+        const m = (await client.query(
+          'SELECT status FROM memberships WHERE user_id = $1 AND business_id = $2', [u.id, sesion.negocio.id])).rows[0];
+        if (m) {
+          throw new ErrorAuth(409, 'YA_ES_MIEMBRO', m.status === 'active'
+            ? 'Esa persona ya tiene acceso a esta barbería'
+            : 'Esa persona ya pertenece a esta barbería pero está desactivada: actívala desde la lista');
+        }
       }
-      const m = await client.query(
-        `INSERT INTO memberships (user_id, business_id, role, barber_id) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (user_id, business_id) DO NOTHING`, [userId, sesion.negocio.id, rol, barberId]);
-      if (!m.rowCount) throw new ErrorAuth(409, 'YA_ES_MIEMBRO', 'Esa persona ya tiene acceso a esta barbería');
-      await evento(client, 'usuario_agregado', { userId: sesion.usuario.id, businessId: sesion.negocio.id, ip, detalle: { nuevo: userId, rol } });
+      /* Una invitación nueva reemplaza a la pendiente anterior para el mismo correo. */
+      await client.query(
+        `UPDATE invitations SET status = 'revoked', responded_at = NOW()
+         WHERE business_id = $1 AND lower(email) = $2 AND status = 'pending'`, [sesion.negocio.id, correo]);
+      inv = (await client.query(
+        `INSERT INTO invitations (id, token_hash, business_id, email, name, role, barber_id, invited_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + ($9::text || ' days')::interval) RETURNING *`,
+        [nuevoIdInvitacion(), resumen(token), sesion.negocio.id, correo, nombre, rol, barberId, sesion.usuario.id, String(DIAS_INVITACION)])).rows[0];
+      await evento(client, 'invitacion_creada', { userId: sesion.usuario.id, businessId: sesion.negocio.id, ip, detalle: { invitacion: inv.id, rol } });
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -712,13 +780,228 @@ function crearAutenticacion({
     } finally {
       client.release();
     }
-    if (creado) await solicitarRecuperacionInterna(userId);
-    return (await listarUsuarios(sesion.negocio.id)).find(u => u.id === userId);
+    const correoEnviado = await enviarInvitacion(inv, token, { cuentaExiste });
+    return { invitacion: resumenInvitacion(inv), correoEnviado };
   }
 
-  async function solicitarRecuperacionInterna(userId) {
-    const u = (await pool.query('SELECT email FROM users WHERE id = $1', [userId])).rows[0];
-    if (u) await solicitarRecuperacion(u.email, { ip: 'interno:' + userId });
+  async function listarInvitaciones(businessId) {
+    const r = await pool.query(
+      `SELECT * FROM invitations WHERE business_id = $1 AND status = 'pending' ORDER BY created_at`, [businessId]);
+    return r.rows.map(resumenInvitacion);
+  }
+
+  async function invitacionDeNegocio(cliente, sesion, id) {
+    const inv = (await cliente.query(
+      'SELECT * FROM invitations WHERE id = $1 AND business_id = $2 FOR UPDATE', [String(id), sesion.negocio.id])).rows[0];
+    if (!inv) throw new ErrorAuth(404, 'NO_ENCONTRADO', 'Invitación no encontrada en esta barbería');
+    if (inv.status !== 'pending') throw new ErrorAuth(409, 'INVITACION_CERRADA', 'Esa invitación ya no está pendiente');
+    return inv;
+  }
+
+  async function revocarInvitacion(sesion, id, { ip } = {}) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inv = await invitacionDeNegocio(client, sesion, id);
+      await client.query(`UPDATE invitations SET status = 'revoked', responded_at = NOW() WHERE id = $1`, [inv.id]);
+      await evento(client, 'invitacion_revocada', { userId: sesion.usuario.id, businessId: sesion.negocio.id, ip, detalle: { invitacion: inv.id } });
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /* Nuevo enlace y nuevo plazo; el enlace anterior deja de servir. */
+  async function reenviarInvitacion(sesion, id, { ip } = {}) {
+    limitar('invitar', ip);
+    const token = tokenAleatorio();
+    const client = await pool.connect();
+    let inv;
+    try {
+      await client.query('BEGIN');
+      const actual = await invitacionDeNegocio(client, sesion, id);
+      inv = (await client.query(
+        `UPDATE invitations SET token_hash = $2, expires_at = NOW() + ($3::text || ' days')::interval
+         WHERE id = $1 RETURNING *`, [actual.id, resumen(token), String(DIAS_INVITACION)])).rows[0];
+      await evento(client, 'invitacion_reenviada', { userId: sesion.usuario.id, businessId: sesion.negocio.id, ip, detalle: { invitacion: inv.id } });
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    const u = (await pool.query('SELECT password_hash FROM users WHERE lower(email) = lower($1)', [inv.email])).rows[0];
+    const correoEnviado = await enviarInvitacion(inv, token, { cuentaExiste: Boolean(u && u.password_hash) });
+    return { invitacion: resumenInvitacion(inv), correoEnviado };
+  }
+
+  /* Invitación válida por su código; explica si venció, se usó o se revocó. */
+  async function invitacionPorToken(cliente, token) {
+    const inv = (await cliente.query(
+      `SELECT i.*, i.expires_at <= NOW() AS vencida, b.name AS negocio, b.status AS estado_negocio
+       FROM invitations i JOIN businesses b ON b.id = i.business_id
+       WHERE i.token_hash = $1 FOR UPDATE OF i`, [resumen(String(token || ''))])).rows[0];
+    if (!inv) throw new ErrorAuth(404, 'INVITACION_INVALIDA', 'La invitación no es válida. Revisa que el enlace esté completo.');
+    const cerradas = {
+      accepted: 'Esta invitación ya se aceptó.',
+      declined: 'Esta invitación se rechazó.',
+      revoked: 'La barbería canceló esta invitación o envió una más reciente.'
+    };
+    if (inv.status !== 'pending') throw new ErrorAuth(410, 'INVITACION_CERRADA', cerradas[inv.status] || 'La invitación ya no está disponible.');
+    if (inv.vencida) throw new ErrorAuth(410, 'INVITACION_VENCIDA', 'La invitación venció. Pide a la barbería que te envíe una nueva.');
+    if (inv.estado_negocio === 'suspended') throw new ErrorAuth(410, 'INVITACION_CERRADA', 'La barbería no está disponible.');
+    return inv;
+  }
+
+  async function consultarInvitacion(token, { ip } = {}) {
+    limitar('invitacion', ip);
+    const inv = await invitacionPorToken(pool, token);
+    const u = (await pool.query(
+      'SELECT password_hash, totp_enabled_at FROM users WHERE lower(email) = lower($1)', [inv.email])).rows[0];
+    return {
+      businessName: inv.negocio,
+      email: inv.email,
+      name: inv.name,
+      role: inv.role,
+      roleName: NOMBRES_ROL[inv.role],
+      expiresAt: inv.expires_at,
+      accountExists: Boolean(u && u.password_hash),
+      twoFactor: Boolean(u && u.totp_enabled_at)
+    };
+  }
+
+  /* Crea la pertenencia a partir de la invitación (dentro de una transacción). */
+  async function crearPertenencia(client, inv, userId) {
+    const m = await client.query(
+      `INSERT INTO memberships (user_id, business_id, role, barber_id) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, business_id) DO NOTHING`, [userId, inv.business_id, inv.role, inv.barber_id]);
+    if (!m.rowCount) throw new ErrorAuth(409, 'YA_ES_MIEMBRO', 'Ya tienes acceso a esta barbería');
+    await client.query(
+      `UPDATE invitations SET status = 'accepted', responded_at = NOW(), accepted_user_id = $2 WHERE id = $1`, [inv.id, userId]);
+  }
+
+  async function aceptarInvitacion(token, datos = {}, { ip, userAgent } = {}) {
+    limitar('invitacion', ip);
+    const client = await pool.connect();
+    let userId;
+    let inv;
+    try {
+      await client.query('BEGIN');
+      inv = await invitacionPorToken(client, token);
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['master-reservas:correo:' + inv.email.toLowerCase()]);
+      const u = (await client.query('SELECT * FROM users WHERE lower(email) = lower($1)', [inv.email])).rows[0];
+      if (u && u.password_hash) {
+        /* Cuenta existente: debe demostrar que es suya. */
+        if (u.status !== 'active' || !(await claveCorrecta(String(datos.password || ''), u.password_hash))) {
+          /* Fuera de la transacción para que el registro no se pierda al deshacerla. */
+          await evento(null, 'invitacion_clave_incorrecta', { userId: u.id, businessId: inv.business_id, ip });
+          throw new ErrorAuth(400, 'CLAVE_ACTUAL', 'La contraseña no es correcta');
+        }
+        if (u.totp_enabled_at) {
+          if (!datos.code) throw new ErrorAuth(400, 'CODIGO_REQUERIDO', 'Escribe el código de tu aplicación de dos pasos');
+          if (!(await codigoDosPasosCorrecto(u.id, datos.code))) throw new ErrorAuth(400, 'CODIGO_INVALIDO', 'El código no es correcto');
+        }
+        userId = u.id;
+      } else {
+        /* Sin cuenta: la crea con el correo de la invitación (el enlace prueba que es suyo). */
+        const nombre = String(datos.name || inv.name || '').trim().slice(0, 120);
+        if (nombre.length < 2) throw new ErrorAuth(400, 'NOMBRE_REQUERIDO', 'Escribe tu nombre');
+        const hash = await cifrarClave(validarClave(datos.password, { correo: inv.email, nombre }));
+        if (u) {
+          userId = u.id;
+          await client.query(
+            `UPDATE users SET name = $2, password_hash = $3, password_changed_at = NOW(), email_verified_at = NOW(),
+                    updated_at = NOW() WHERE id = $1`, [u.id, nombre, hash]);
+        } else {
+          userId = nuevoId();
+          await client.query(
+            `INSERT INTO users (id, email, name, password_hash, password_changed_at, email_verified_at)
+             VALUES ($1, $2, $3, $4, NOW(), NOW())`, [userId, inv.email.toLowerCase(), nombre, hash]);
+        }
+      }
+      await crearPertenencia(client, inv, userId);
+      await evento(client, 'invitacion_aceptada', { userId, businessId: inv.business_id, ip, detalle: { invitacion: inv.id } });
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    const u = (await pool.query('SELECT * FROM users WHERE id = $1', [userId])).rows[0];
+    return completarInicio(u, { id: inv.business_id, name: inv.negocio, role: inv.role }, { ip, userAgent });
+  }
+
+  async function rechazarInvitacion(token, { ip } = {}) {
+    limitar('invitacion', ip);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inv = await invitacionPorToken(client, token);
+      await client.query(`UPDATE invitations SET status = 'declined', responded_at = NOW() WHERE id = $1`, [inv.id]);
+      await evento(client, 'invitacion_rechazada', { businessId: inv.business_id, ip, detalle: { invitacion: inv.id } });
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /* Invitaciones pendientes para el correo de la sesión (panel → Mi cuenta). */
+  async function misInvitaciones(sesion) {
+    const r = await pool.query(
+      `SELECT i.*, b.name AS negocio, u.name AS invitante
+       FROM invitations i JOIN businesses b ON b.id = i.business_id LEFT JOIN users u ON u.id = i.invited_by
+       WHERE lower(i.email) = lower($1) AND i.status = 'pending' AND i.expires_at > NOW() AND b.status <> 'suspended'
+       ORDER BY i.created_at`, [sesion.usuario.email]);
+    return r.rows.map(x => ({
+      id: x.id, businessId: x.business_id, businessName: x.negocio, invitedBy: x.invitante,
+      role: x.role, roleName: NOMBRES_ROL[x.role], expiresAt: x.expires_at
+    }));
+  }
+
+  async function responderMiInvitacion(sesion, id, aceptar, { ip } = {}) {
+    limitar('invitacion', ip);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inv = (await client.query(
+        `SELECT i.*, b.name AS negocio FROM invitations i JOIN businesses b ON b.id = i.business_id
+         WHERE i.id = $1 AND lower(i.email) = lower($2) FOR UPDATE OF i`, [String(id), sesion.usuario.email])).rows[0];
+      /* La invitación de otra persona es "no encontrada": no se revela que existe. */
+      if (!inv) throw new ErrorAuth(404, 'NO_ENCONTRADO', 'Invitación no encontrada');
+      if (inv.status !== 'pending') throw new ErrorAuth(410, 'INVITACION_CERRADA', 'Esa invitación ya no está pendiente');
+      if (new Date(inv.expires_at) <= new Date()) throw new ErrorAuth(410, 'INVITACION_VENCIDA', 'La invitación venció. Pide una nueva.');
+      if (aceptar) {
+        await crearPertenencia(client, inv, sesion.usuario.id);
+      } else {
+        await client.query(`UPDATE invitations SET status = 'declined', responded_at = NOW() WHERE id = $1`, [inv.id]);
+      }
+      await evento(client, aceptar ? 'invitacion_aceptada' : 'invitacion_rechazada',
+        { userId: sesion.usuario.id, businessId: inv.business_id, ip, detalle: { invitacion: inv.id } });
+      await client.query('COMMIT');
+      return { businessId: inv.business_id, businessName: inv.negocio };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /* Pasar a otra barbería de la misma persona sin volver a escribir la contraseña. */
+  async function cambiarNegocio(sesion, tokenActual, businessId, { ip, userAgent } = {}) {
+    const elegido = (await negociosDeUsuario(sesion.usuario.id)).find(n => n.id === String(businessId || ''));
+    if (!elegido) throw new ErrorAuth(403, 'SIN_ACCESO', 'No tienes acceso a esa barbería');
+    const u = (await pool.query('SELECT * FROM users WHERE id = $1', [sesion.usuario.id])).rows[0];
+    await cerrarSesion(tokenActual, { ip });
+    return completarInicio(u, elegido, { ip, userAgent });
   }
 
   async function propietariosActivos(cliente, businessId) {
@@ -812,7 +1095,16 @@ function crearAutenticacion({
     restablecerClave,
     cambiarClave,
     listarUsuarios,
-    agregarUsuario,
+    invitarUsuario,
+    listarInvitaciones,
+    revocarInvitacion,
+    reenviarInvitacion,
+    consultarInvitacion,
+    aceptarInvitacion,
+    rechazarInvitacion,
+    misInvitaciones,
+    responderMiInvitacion,
+    cambiarNegocio,
     modificarUsuario,
     crearPropietario,
     negociosDeUsuario

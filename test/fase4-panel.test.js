@@ -96,20 +96,31 @@ test.describe('Fase 4 · panel en el navegador', () => {
     const { ctx, page } = await entrarComo(duena);
     try {
       await abrirAjuste(page, 'usuarios');
-      await page.waitForSelector('text=+ Agregar usuario');
+      await page.waitForSelector('text=+ Invitar usuario');
       const nuevo = `equipo-${unico()}@prueba.test`;
       const desde = s.logs.length;
-      await page.click('text=+ Agregar usuario');
+      await page.click('text=+ Invitar usuario');
       await page.fill('#usEmail', nuevo);
       await page.fill('#usName', 'Pedro Equipo');
       await page.selectOption('#usRole', 'staff');
       assert.equal(await page.isVisible('#usBarberField'), false, 'el barbero solo se pide para el rol Barbero');
       await page.click('#saveUserBtn');
       assert.match(await avisoEmergente(page), /Invitación enviada/);
-      await s.esperarLog(new RegExp(nuevo.replace('.', '\\.')), 5000, desde);
+      /* Queda pendiente: todavía no es usuario de la barbería. */
+      const pendiente = page.locator('#pendingInvitations .barber-card', { hasText: nuevo });
+      await pendiente.waitFor();
+      assert.match(await pendiente.textContent(), /Pendiente/);
+      assert.equal(await page.locator('#settingContent > .barber-card', { hasText: 'Pedro Equipo' }).count(), 0);
+
+      /* La persona acepta con el enlace del correo. */
+      const linea = await s.esperarLog(new RegExp(nuevo.replace('.', '\\.')), 5000, desde);
+      const token = linea.match(/invitacion=([A-Za-z0-9_-]+)/)[1];
+      assert.equal((await s.pedir('POST', '/api/auth/invitacion/aceptar', { token, name: 'Pedro Equipo', password: CLAVE }, { cookie: null })).status, 200);
+      await page.evaluate(() => loadUserSettings());
       const tarjeta = page.locator('.barber-card', { hasText: 'Pedro Equipo' });
       await tarjeta.waitFor();
       assert.match(await tarjeta.textContent(), /Recepción y caja/);
+      assert.equal(await page.locator('#pendingInvitations').count(), 0, 'ya no hay invitaciones pendientes');
 
       await tarjeta.locator('text=Cambiar rol').click();
       await page.selectOption('#usRole', 'barber');
@@ -133,8 +144,8 @@ test.describe('Fase 4 · panel en el navegador', () => {
       const otra = await entrarComo(admin);
       try {
         await abrirAjuste(otra.page, 'usuarios');
-        await otra.page.waitForSelector('text=Solo un propietario puede agregar o cambiar usuarios');
-        assert.equal(await otra.page.locator('text=+ Agregar usuario').count(), 0);
+        await otra.page.waitForSelector('text=Solo un propietario puede invitar o cambiar usuarios');
+        assert.equal(await otra.page.locator('text=+ Invitar usuario').count(), 0);
         assert.equal(await otra.page.locator('text=Cambiar rol').count(), 0);
       } finally {
         await otra.ctx.close();
