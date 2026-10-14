@@ -7,6 +7,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const { Pool } = require('pg');
+const { AsyncLocalStorage } = require('node:async_hooks');
 
 const app = express();
 
@@ -19,6 +20,80 @@ const DB_FILE =
     'data',
     'db.json'
   );
+
+
+/* =========================================================
+   ALMACÉN DE LA AGENDA
+   Con DATABASE_URL, reservas, barberos, servicios y horarios
+   se guardan en PostgreSQL (persisten entre reinicios y
+   despliegues). Sin DATABASE_URL se usa data/db.json, solo
+   para desarrollo local.
+========================================================= */
+
+const {
+  crearAlmacen,
+  ErrorConflictoHorario,
+  validarNegocio
+} = require('./almacen');
+
+const {
+  crearPlataforma,
+  ErrorPlataforma
+} = require('./plataforma');
+
+const {
+  crearVerificador,
+  clavesConfiguradas
+} = require('./firma-plataforma');
+
+const {
+  archivarDemo,
+  propietarioInicial
+} = require('./despliegue-inicial');
+
+const DEFAULT_BUSINESS_ID =
+  validarNegocio(
+    process.env.DEFAULT_BUSINESS_ID ||
+    'el-master'
+  );
+
+const MODO_ALMACEN =
+  process.env.DATABASE_URL
+    ? 'postgres'
+    : 'archivo';
+
+
+/* Render define RENDER=true en sus servicios; NODE_ENV=production en otros hostings. */
+function esProduccion() {
+
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env.RENDER === 'true'
+  );
+
+}
+
+
+/*
+  Registro de nuevas barberías: abierto en desarrollo y pruebas,
+  cerrado en producción salvo que REGISTRO_ABIERTO=1.
+  REGISTRO_ABIERTO=0 lo cierra en cualquier entorno.
+*/
+function registroAbierto() {
+
+  if (process.env.REGISTRO_ABIERTO === '0') return false;
+
+  /*
+    En producción, además de REGISTRO_ABIERTO=1, el correo tiene que estar
+    configurado: sin él nadie podría confirmar su cuenta.
+  */
+  if (esProduccion()) {
+    return process.env.REGISTRO_ABIERTO === '1' && correoListo();
+  }
+
+  return true;
+
+}
 
 
 /* =========================================================
@@ -65,9 +140,21 @@ pool
    pueden incluir fotografía del comprobante.
 ========================================================= */
 
+/* Render (y otros proxys) envían la IP real del cliente en X-Forwarded-For. */
+app.set(
+  'trust proxy',
+  process.env.TRUST_PROXY
+    ? Number(process.env.TRUST_PROXY)
+    : (process.env.RENDER ? 1 : false)
+);
+
 app.use(
   express.json({
-    limit: '5mb'
+    limit: '5mb',
+    /* Las peticiones del Panel Maestro se verifican con su cuerpo exacto (firma). */
+    verify: (req, res, buf) => {
+      if (req.url.startsWith('/api/plataforma/')) req.cuerpoCrudo = buf.toString('utf8');
+    }
   })
 );
 
@@ -78,6 +165,181 @@ app.use(
   })
 );
 
+
+/* =========================================================
+   SEGURIDAD DE CADA PETICIÓN
+   - Cabeceras de seguridad (no cambian el diseño).
+   - Las peticiones que modifican datos solo se aceptan desde
+     el mismo sitio (protección contra CSRF).
+   - Lee la sesión (cookie HttpOnly) y la deja en req.sesion.
+   - El panel (/admin.html) exige sesión: si no hay, va a la
+     pantalla de acceso.
+========================================================= */
+
+const COOKIE_SESION = 'mr_sesion';
+
+const ADMIN_SIN_CLAVE_LOCAL =
+  MODO_ALMACEN === 'archivo' &&
+  process.env.ADMIN_SIN_CLAVE_LOCAL === '1' &&
+  !esProduccion();
+
+function leerCookie(req, nombre) {
+
+  for (const parte of String(req.headers.cookie || '').split(';')) {
+
+    const i = parte.indexOf('=');
+
+    if (i > 0 && parte.slice(0, i).trim() === nombre) {
+
+      try {
+        return decodeURIComponent(parte.slice(i + 1).trim());
+      } catch (error) {
+        return null;
+      }
+
+    }
+
+  }
+
+  return null;
+
+}
+
+function cookieSegura(req) {
+
+  return (
+    req.secure ||
+    req.headers['x-forwarded-proto'] === 'https' ||
+    process.env.COOKIE_SECURE === '1'
+  );
+
+}
+
+function escribirCookieSesion(req, res, token, maxAgeSegundos) {
+
+  res.append(
+    'Set-Cookie',
+    `${COOKIE_SESION}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; ` +
+    `Max-Age=${maxAgeSegundos}` +
+    (cookieSegura(req) ? '; Secure' : '')
+  );
+
+}
+
+/* Rutas que no requieren sesión: página pública, reservas de clientes, WhatsApp y acceso. */
+function esRutaPublica(req) {
+
+  const p = req.path;
+  const m = req.method;
+
+  if (!p.startsWith('/api/')) return true;
+  if (p.startsWith('/api/auth/')) return true;
+  if (p.startsWith('/api/public/') && (m === 'GET' || m === 'HEAD')) return true;
+  if (p === '/api/availability' && m === 'GET') return true;
+  if (p === '/api/bookings' && m === 'POST') return true;
+  if (p === '/api/health' && m === 'GET') return true;
+  /* Panel Maestro: no usa sesión; cada petición va firmada (ver más abajo). */
+  if (p.startsWith('/api/plataforma/')) return true;
+
+  return false;
+
+}
+
+function origenPermitido(req) {
+
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
+  if (req.path.startsWith('/webhooks/')) return true;
+
+  const origen = req.headers.origin;
+
+  if (!origen) return true;
+
+  try {
+    return new URL(origen).host === req.headers.host;
+  } catch (error) {
+    return false;
+  }
+
+}
+
+app.use(
+  async (req, res, next) => {
+
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'SAMEORIGIN',
+      'Referrer-Policy': 'strict-origin-when-cross-origin'
+    });
+
+    if (cookieSegura(req)) {
+      res.set('Strict-Transport-Security', 'max-age=15552000');
+    }
+
+    if (!origenPermitido(req)) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Solicitud no permitida desde otro sitio'
+      });
+    }
+
+    req.sesion = null;
+
+    try {
+
+      if (ADMIN_SIN_CLAVE_LOCAL) {
+
+        /* Solo desarrollo local sin PostgreSQL. Nunca en producción. */
+        req.sesion = {
+          usuario: { id: 'local', email: 'local', name: 'Local' },
+          negocio: { id: DEFAULT_BUSINESS_ID, name: 'Local' },
+          rol: 'owner',
+          barberId: null,
+          local: true
+        };
+
+      } else if (
+        MODO_ALMACEN === 'postgres' &&
+        almacen.info().listo
+      ) {
+
+        const token =
+          leerCookie(req, COOKIE_SESION);
+
+        if (token) {
+
+          req.sesion =
+            await autenticacion.leerSesion(token);
+
+          req.tokenSesion = token;
+
+        }
+
+      }
+
+    } catch (error) {
+
+      console.error('ERROR LEYENDO SESIÓN:', error.message);
+      req.sesion = null;
+
+    }
+
+    if (
+      (req.path === '/admin.html' || req.path === '/admin') &&
+      !req.sesion
+    ) {
+      res.set('Cache-Control', 'no-store');
+      return res.redirect(302, '/acceso.html');
+    }
+
+    if (req.path === '/admin.html') {
+      res.set('Cache-Control', 'no-store');
+    }
+
+    next();
+
+  }
+);
+
 app.use(
   express.static(
     path.join(
@@ -86,6 +348,191 @@ app.use(
     )
   )
 );
+
+
+/* =========================================================
+   BARBERÍA DE CADA PETICIÓN
+   Todas las consultas usan negocioActual().
+   - Rutas de administración: la barbería de la sesión
+     iniciada. Cualquier otro dato que envíe el navegador
+     (cuerpo, parámetros, cabeceras) se ignora.
+   - Rutas públicas: la barbería principal (la página pública
+     por barbería llega en la fase 4).
+========================================================= */
+
+const contextoNegocio =
+  new AsyncLocalStorage();
+
+function negocioActual() {
+
+  return (
+    contextoNegocio.getStore()?.negocio ||
+    DEFAULT_BUSINESS_ID
+  );
+
+}
+
+function sesionActual() {
+
+  return (
+    contextoNegocio.getStore()?.sesion ||
+    null
+  );
+
+}
+
+function resolverNegocio(req) {
+
+  if (
+    !esRutaPublica(req) &&
+    req.sesion
+  ) {
+    return req.sesion.negocio.id;
+  }
+
+  return DEFAULT_BUSINESS_ID;
+
+}
+
+app.use(
+  async (req, res, next) => {
+
+    try {
+
+      const negocio =
+        resolverNegocio(req);
+
+      await almacen.cargarNegocio(
+        negocio
+      );
+
+      contextoNegocio.run(
+        {
+          negocio,
+          sesion: req.sesion,
+          origen: `${req.protocol}://${req.get('host')}`
+        },
+        next
+      );
+
+    } catch (error) {
+
+      next(error);
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   PERMISOS POR RUTA
+   Todo lo que no es público exige sesión. Cada ruta pide un
+   permiso; lo que no aparece en la lista solo lo puede usar
+   el propietario (se niega por defecto).
+========================================================= */
+
+const {
+  crearAutenticacion,
+  ErrorAuth,
+  tienePermiso,
+  permisosDe,
+  NOMBRES_ROL
+} = require('./autenticacion');
+
+const REGLAS_PERMISO = [
+  ['GET', /^\/api\/config$/, ['panel']],
+  ['GET', /^\/api\/bookings$/, ['reservas', 'reservas.propias']],
+  ['PATCH', /^\/api\/bookings\/[^/]+$/, ['reservas', 'reservas.propias']],
+  ['POST', /^\/api\/sales$/, ['caja']],
+  ['*', /^\/api\/cash\//, ['caja']],
+  ['GET', /^\/api\/admin\/products$/, ['productos', 'productos.ver']],
+  ['*', /^\/api\/admin\/products(\/|$)/, ['productos']],
+  ['GET', /^\/api\/admin\/reports$/, ['informes']],
+  ['GET', /^\/api\/admin\/backup$/, ['respaldo']],
+  ['GET', /^\/api\/admin\/usuarios$/, ['usuarios.ver']],
+  ['*', /^\/api\/admin\/usuarios(\/|$)/, ['usuarios']],
+  ['GET', /^\/api\/admin\/invitaciones$/, ['usuarios.ver']],
+  ['*', /^\/api\/admin\/invitaciones(\/|$)/, ['usuarios']],
+  ['GET', /^\/api\/admin\/(services|business|barbers|settings|hours|media)$/, ['panel']],
+  ['*', /^\/api\/admin\/(services|business|barbers|settings|hours|media)(\/|$)/, ['configuracion']]
+];
+
+function permisosRequeridos(req) {
+
+  for (const [metodo, patron, permisos] of REGLAS_PERMISO) {
+
+    if (
+      (metodo === '*' || metodo === req.method) &&
+      patron.test(req.path)
+    ) {
+      return permisos;
+    }
+
+  }
+
+  return ['*'];
+
+}
+
+app.use(
+  (req, res, next) => {
+
+    if (esRutaPublica(req)) {
+      return next();
+    }
+
+    if (
+      MODO_ALMACEN === 'archivo' &&
+      !ADMIN_SIN_CLAVE_LOCAL
+    ) {
+      return res.status(503).json({
+        ok: false,
+        error: 'La administración requiere PostgreSQL'
+      });
+    }
+
+    if (!req.sesion) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Inicia sesión para continuar'
+      });
+    }
+
+    const requeridos =
+      permisosRequeridos(req);
+
+    if (
+      !requeridos.some(
+        permiso =>
+          tienePermiso(req.sesion.rol, permiso)
+      )
+    ) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Tu cuenta no tiene permiso para esta acción'
+      });
+    }
+
+    next();
+
+  }
+);
+
+
+/* Barbero con permiso solo sobre sus propias reservas. */
+function soloReservasPropias() {
+
+  const sesion =
+    sesionActual();
+
+  return Boolean(
+    sesion &&
+    !tienePermiso(sesion.rol, 'reservas') &&
+    tienePermiso(sesion.rol, 'reservas.propias')
+  );
+
+}
 
 
 /* =========================================================
@@ -280,50 +727,13 @@ function defaultDb() {
 
 
 /* =========================================================
-   LEER BASE JSON
+   NORMALIZAR DATOS DE LA AGENDA
+   Completa valores que faltan (compatibilidad con datos
+   creados por versiones anteriores).
 ========================================================= */
 
-function readDb() {
+function normalizarDb(db) {
 
-  try {
-
-    if (
-      !fs.existsSync(DB_FILE)
-    ) {
-
-      const initial =
-        defaultDb();
-
-      fs.mkdirSync(
-        path.dirname(DB_FILE),
-        {
-          recursive: true
-        }
-      );
-
-      fs.writeFileSync(
-        DB_FILE,
-        JSON.stringify(
-          initial,
-          null,
-          2
-        )
-      );
-
-      return initial;
-
-    }
-
-
-    const raw =
-      fs.readFileSync(
-        DB_FILE,
-        'utf8'
-      );
-
-
-    const db =
-      JSON.parse(raw);
 
 
     const defaults =
@@ -397,44 +807,174 @@ function readDb() {
 
     return db;
 
-  } catch (error) {
+}
 
-    console.error(
-      'ERROR LEYENDO DB.JSON:',
-      error
+
+/* =========================================================
+   LEER Y GUARDAR LA AGENDA
+   readDb() devuelve una copia que se puede modificar.
+   writeDb() devuelve una promesa: hay que esperarla antes de
+   confirmar al cliente. Si falla, no se guarda nada y la
+   información anterior se conserva.
+========================================================= */
+
+const almacen =
+  crearAlmacen({
+    modo: MODO_ALMACEN,
+    pool,
+    archivo: DB_FILE,
+    negocio: DEFAULT_BUSINESS_ID,
+    datosIniciales: defaultDb,
+    normalizar: normalizarDb,
+    intervalos: (db, booking) =>
+      bookingIntervals(db, booking)
+  });
+
+
+function readDb() {
+
+  return almacen.leer(
+    negocioActual()
+  );
+
+}
+
+
+function writeDb(db) {
+
+  return almacen.guardar(
+    db,
+    negocioActual()
+  );
+
+}
+
+
+/* Identificadores de reserva únicos aunque lleguen dos en el mismo milisegundo. */
+let ultimoIdReserva = 0;
+
+function nuevoIdReserva() {
+
+  ultimoIdReserva =
+    Math.max(
+      Date.now(),
+      ultimoIdReserva + 1
     );
 
-    return defaultDb();
-
-  }
+  return `BK-${ultimoIdReserva}`;
 
 }
 
 
 /* =========================================================
-   GUARDAR BASE JSON
+   CORREO (recuperación de contraseña e invitaciones)
+   Con RESEND_API_KEY y CORREO_REMITENTE se envía de verdad.
+   Sin configurar: en desarrollo se muestra en la consola; en
+   producción no se envía ni se muestra el enlace.
 ========================================================= */
 
-function writeDb(db) {
+const { crearCorreo } = require('./correo');
 
-  fs.mkdirSync(
-    path.dirname(DB_FILE),
-    {
-      recursive: true
-    }
-  );
+const correo =
+  crearCorreo({
+    apiKey: process.env.RESEND_API_KEY || '',
+    remitente: process.env.CORREO_REMITENTE || '',
+    responderA: process.env.CORREO_RESPONDER_A || '',
+    /* Solo para pruebas controladas: apuntar a un servidor falso en lugar de Resend. */
+    apiUrl: process.env.RESEND_API_URL || 'https://api.resend.com/emails',
+    produccion: esProduccion(),
+    vistaPreviaDir: esProduccion() ? '' : (process.env.CORREO_VISTA_PREVIA_DIR || ''),
+    timeoutMs: Number(process.env.CORREO_TIEMPO_LIMITE_MS) || 10000
+  });
+
+function enviarCorreo(mensaje) {
+
+  return correo.enviar(mensaje);
+
+}
 
 
-  fs.writeFileSync(
-    DB_FILE,
-    JSON.stringify(
-      db,
-      null,
-      2
-    )
+/* El correo está listo para producción: credenciales y dirección pública. */
+function correoListo() {
+
+  return (
+    correo.configurado &&
+    Boolean(process.env.PUBLIC_BASE_URL)
   );
 
 }
+
+
+function urlPublica() {
+
+  if (process.env.PUBLIC_BASE_URL) {
+    return process.env.PUBLIC_BASE_URL.replace(/\/+$/, '');
+  }
+
+  /* Solo en desarrollo se usa el host de la petición (evita enlaces a dominios falsos). */
+  return esProduccion()
+    ? ''
+    : (contextoNegocio.getStore()?.origen || '');
+
+}
+
+
+/*
+  Clave para cifrar los secretos de la verificación en dos pasos.
+  En producción debe definirse CLAVE_DOS_PASOS (no se inventa una);
+  sin ella, la función queda desactivada. En desarrollo y pruebas
+  se usa una clave local.
+*/
+function claveDosPasos() {
+
+  if (process.env.CLAVE_DOS_PASOS) {
+    return require('crypto')
+      .createHash('sha256')
+      .update(process.env.CLAVE_DOS_PASOS)
+      .digest();
+  }
+
+  if (esProduccion()) return null;
+
+  return require('crypto')
+    .createHash('sha256')
+    .update('solo-desarrollo-master-reservas')
+    .digest();
+
+}
+
+
+const autenticacion =
+  MODO_ALMACEN === 'postgres'
+    ? crearAutenticacion({
+        pool,
+        almacen,
+        enviarCorreo,
+        urlBase: urlPublica,
+        limiteIp:
+          Number(process.env.AUTH_LIMITE_IP) || 30,
+        verificarCorreo:
+          process.env.VERIFICAR_CORREO !== '0',
+        claveDosPasos:
+          claveDosPasos(),
+        catalogoPlanes:
+          () => plataforma.catalogo(),
+        diasPruebaPorDefecto:
+          Number(process.env.DIAS_PRUEBA_POR_DEFECTO) || 7
+      })
+    : null;
+
+/* Integración con el Panel Maestro (fase 6). */
+const plataforma =
+  MODO_ALMACEN === 'postgres'
+    ? crearPlataforma({ pool })
+    : null;
+
+/* El Máster (barbería principal) y las indicadas en NEGOCIOS_PROTEGIDOS nunca se bloquean. */
+const NEGOCIOS_PROTEGIDOS = [
+  DEFAULT_BUSINESS_ID,
+  ...String(process.env.NEGOCIOS_PROTEGIDOS || '').split(',').map(x => x.trim()).filter(Boolean)
+];
 
 
 /* =========================================================
@@ -619,15 +1159,30 @@ await pool.query(`
 }
 
 
-initPostgres()
-  .catch(error => {
+/*
+  Instalación limpia (ARCHIVAR_DEMO): antes de crear o modificar cualquier
+  tabla, guarda la demostración en el esquema respaldo_demo. Si no es seguro,
+  el proceso se detiene y Render mantiene la versión anterior.
+*/
+const demoArchivada =
+  MODO_ALMACEN === 'postgres'
+    ? archivarDemo({ pool, confirmar: process.env.ARCHIVAR_DEMO })
+        .catch(error => {
+          console.error('NO SE ARRANCA:', error.message);
+          process.exit(1);
+        })
+    : Promise.resolve();
 
-    console.error(
-      'ERROR INICIALIZANDO POSTGRESQL:',
-      error
-    );
+const postgresAdministrativoListo =
+  demoArchivada.then(() => initPostgres())
+    .catch(error => {
 
-  });
+      console.error(
+        'ERROR INICIALIZANDO POSTGRESQL:',
+        error
+      );
+
+    });
 
 
 /* =========================================================
@@ -698,8 +1253,19 @@ app.get(
         readDb();
 
 
+      /* Un barbero solo ve sus propias reservas. */
+      const lista =
+        soloReservasPropias()
+          ? (db.bookings || []).filter(
+              item =>
+                item.barberId &&
+                item.barberId === sesionActual().barberId
+            )
+          : (db.bookings || []);
+
+
       res.json(
-        db.bookings || []
+        lista
       );
 
     } catch (error) {
@@ -728,7 +1294,7 @@ app.get(
 
 app.patch(
   '/api/bookings/:id',
-  (req, res) => {
+  async (req, res) => {
 
     try {
 
@@ -740,7 +1306,11 @@ app.patch(
         db.bookings.find(
           item =>
             String(item.id) ===
-            String(req.params.id)
+            String(req.params.id) &&
+            (
+              !soloReservasPropias() ||
+              item.barberId === sesionActual().barberId
+            )
         );
 
 
@@ -799,7 +1369,7 @@ app.patch(
           .toISOString();
 
 
-      writeDb(db);
+      await writeDb(db);
 
 
       res.json({
@@ -808,6 +1378,20 @@ app.patch(
       });
 
     } catch (error) {
+
+      if (
+        error instanceof
+        ErrorConflictoHorario
+      ) {
+
+        return res.status(409).json({
+          ok: false,
+          error:
+            'Ese horario ya está ocupado por otra reserva'
+        });
+
+      }
+
 
       console.error(
         'ERROR ACTUALIZANDO RESERVA:',
@@ -855,7 +1439,7 @@ app.get(
 
 app.post(
   '/api/admin/services',
-  (req, res) => {
+  async (req, res) => {
 
     try {
 
@@ -968,7 +1552,7 @@ app.post(
       );
 
 
-      writeDb(db);
+      await writeDb(db);
 
 
       res.json({
@@ -1002,7 +1586,7 @@ app.post(
 
 app.patch(
   '/api/admin/services/:id',
-  (req, res) => {
+  async (req, res) => {
 
     try {
 
@@ -1177,7 +1761,7 @@ app.patch(
           .toISOString();
 
 
-      writeDb(db);
+      await writeDb(db);
 
 
       res.json({
@@ -1229,8 +1813,9 @@ app.get(
             created_at,
             updated_at
           FROM products
+          WHERE business_id = $1
           ORDER BY name ASC
-        `);
+        `, [negocioActual()]);
 
 
       const products =
@@ -1416,7 +2001,8 @@ app.post(
   stock,
   min_stock,
   active,
-  image_url
+  image_url,
+  business_id
 )
             VALUES (
               $1,
@@ -1426,7 +2012,8 @@ app.post(
               $5,
               $6,
               $7,
-              $8
+              $8,
+              $9
             )
             RETURNING *
           `,
@@ -1439,7 +2026,8 @@ app.post(
             minStock,
             req.body.active !==
               false,
-             req.body.image || req.body.imageUrl || null
+             req.body.image || req.body.imageUrl || null,
+            negocioActual()
           ]
         );
 
@@ -1486,10 +2074,12 @@ app.patch(
             SELECT *
             FROM products
             WHERE id = $1
+              AND business_id = $2
             LIMIT 1
           `,
           [
-            req.params.id
+            req.params.id,
+            negocioActual()
           ]
         );
 
@@ -1597,6 +2187,7 @@ const result = await pool.query(
       image_url = $7,
       updated_at = NOW()
     WHERE id = $8
+      AND business_id = $9
     RETURNING *
   `,
   [
@@ -1607,7 +2198,8 @@ const result = await pool.query(
     minStock,
     active,
     imageUrl,
-    req.params.id
+    req.params.id,
+    negocioActual()
   ]
 );
 
@@ -1647,14 +2239,14 @@ const result = await pool.query(
 */
 
 async function getTodayCashSession(client = pool) {
-
   const existing =
     await client.query(`
       SELECT *
       FROM cash_sessions
       WHERE session_date = CURRENT_DATE
+        AND business_id = $1
       LIMIT 1
-    `);
+    `, [negocioActual()]);
 
 
   if (
@@ -1670,17 +2262,30 @@ async function getTodayCashSession(client = pool) {
     await client.query(`
       INSERT INTO cash_sessions (
         session_date,
-        status
+        status,
+        business_id
       )
       VALUES (
         CURRENT_DATE,
-        'open'
+        'open',
+        $1
       )
+      ON CONFLICT (business_id, session_date) DO NOTHING
       RETURNING *
-    `);
-
-
-  return created.rows[0];
+    `, [negocioActual()]);
+  if (created.rows.length) {
+    return created.rows[0];
+  }
+  /* Otra petición la creó al mismo tiempo. */
+  const again =
+    await client.query(`
+      SELECT *
+      FROM cash_sessions
+      WHERE session_date = CURRENT_DATE
+        AND business_id = $1
+      LIMIT 1
+    `, [negocioActual()]);
+  return again.rows[0];
 
 }
 
@@ -1912,10 +2517,12 @@ async function calculateSaleItems(
             SELECT *
             FROM products
             WHERE id = $1
+              AND business_id = $2
             FOR UPDATE
           `,
           [
-            id
+            id,
+            negocioActual()
           ]
         );
 
@@ -2158,10 +2765,12 @@ app.post(
               FROM sales
               WHERE booking_id = $1
                 AND status = 'paid'
+                AND business_id = $2
               LIMIT 1
             `,
             [
-              bookingId
+              bookingId,
+              negocioActual()
             ]
           );
 
@@ -2236,12 +2845,13 @@ app.post(
 
               WHERE id = $2
                 AND stock >= $1
-
+                AND business_id = $3
               RETURNING stock
             `,
             [
               item.quantity,
-              item.id
+              item.id,
+              negocioActual()
             ]
           );
 
@@ -2278,13 +2888,10 @@ app.post(
               payment_method,
 
               transfer_receipt,
-
               note,
-
-              status
-
+              status,
+              business_id
             )
-
             VALUES (
               $1,
               $2,
@@ -2294,7 +2901,8 @@ app.post(
               $6,
               $7,
               $8,
-              'paid'
+              'paid',
+              $9
             )
 
             RETURNING *
@@ -2335,8 +2943,8 @@ app.post(
                   0,
                   1000
                 )
-              : null
-
+              : null,
+            negocioActual()
           ]
         );
 
@@ -2390,7 +2998,7 @@ app.post(
                 .toISOString();
 
 
-            writeDb(db);
+            await writeDb(db);
 
           }
 
@@ -2522,14 +3130,13 @@ app.get(
               AS card
 
           FROM sales
-
           WHERE
             sale_date =
               CURRENT_DATE
-
             AND status =
               'paid'
-        `);
+            AND business_id = $1
+        `, [negocioActual()]);
 
 
       const productResult =
@@ -2560,14 +3167,13 @@ app.get(
             jsonb_array_elements(
               items
             ) AS item
-
           WHERE
             sale_date =
               CURRENT_DATE
-
             AND status =
               'paid'
-        `);
+            AND business_id = $1
+        `, [negocioActual()]);
 
 
       const sessionResult =
@@ -2577,8 +3183,9 @@ app.get(
           WHERE
             session_date =
               CURRENT_DATE
+            AND business_id = $1
           LIMIT 1
-        `);
+        `, [negocioActual()]);
 
 
       const row =
@@ -2694,14 +3301,13 @@ app.post(
               AS total
 
           FROM sales
-
           WHERE
             sale_date =
               CURRENT_DATE
-
             AND status =
               'paid'
-        `);
+            AND business_id = $1
+        `, [negocioActual()]);
 
 
       const total =
@@ -2720,8 +3326,9 @@ app.post(
           WHERE
             session_date =
               CURRENT_DATE
+            AND business_id = $1
           FOR UPDATE
-        `);
+        `, [negocioActual()]);
 
 
       let session;
@@ -2768,16 +3375,16 @@ app.post(
 
                 closing_total =
                   $1
-
               WHERE id =
                 $2
-
+                AND business_id = $3
               RETURNING *
             `,
             [
               total,
               existing.rows[0]
-                .id
+                .id,
+              negocioActual()
             ]
           );
 
@@ -2791,28 +3398,24 @@ app.post(
           await client.query(
             `
               INSERT INTO cash_sessions (
-
                 session_date,
-
                 status,
-
                 closed_at,
-
-                closing_total
-
+                closing_total,
+                business_id
               )
-
               VALUES (
                 CURRENT_DATE,
                 'closed',
                 NOW(),
-                $1
+                $1,
+                $2
               )
-
               RETURNING *
             `,
             [
-              total
+              total,
+              negocioActual()
             ]
           );
 
@@ -2969,15 +3572,16 @@ app.get(
 
             WHERE
               sale_date
-              BETWEEN $1
-              AND $2
-
+                BETWEEN $1
+                AND $2
               AND status =
                 'paid'
+              AND business_id = $3
           `,
           [
             from,
-            to
+            to,
+            negocioActual()
           ]
         );
 
@@ -3034,15 +3638,16 @@ app.get(
 
             WHERE
               sale_date
-              BETWEEN $1
-              AND $2
-
+                BETWEEN $1
+                AND $2
               AND status =
                 'paid'
+              AND business_id = $3
           `,
           [
             from,
-            to
+            to,
+            negocioActual()
           ]
         );
 
@@ -3189,8 +3794,9 @@ app.get(
             data,
             updated_at
           FROM admin_settings
+          WHERE business_id = $1
           ORDER BY section ASC
-        `);
+        `, [negocioActual()]);
 
 
       const settings = {};
@@ -3291,34 +3897,32 @@ app.post(
             INSERT INTO admin_settings (
               section,
               data,
-              updated_at
+              updated_at,
+              business_id
             )
-
             VALUES (
               $1,
               $2::jsonb,
-              NOW()
+              NOW(),
+              $3
             )
-
             ON CONFLICT (
+              business_id,
               section
             )
-
             DO UPDATE SET
-
               data =
                 EXCLUDED.data,
-
               updated_at =
                 NOW()
-
             RETURNING *
           `,
           [
             section,
             JSON.stringify(
               data
-            )
+            ),
+            negocioActual()
           ]
         );
 
@@ -7238,7 +7842,7 @@ function crearBookingDesdeSesion(
   return {
 
     id:
-      `BK-${Date.now()}`,
+      nuevoIdReserva(),
 
     name:
       session.data.name,
@@ -7537,7 +8141,8 @@ function validImageData(value) {
 }
 
 async function readSettingsMap() {
-  const result = await pool.query('SELECT section, data FROM admin_settings');
+  const result = await pool.query(
+    'SELECT section, data FROM admin_settings WHERE business_id = $1', [negocioActual()]);
   const map = {};
   for (const row of result.rows) map[row.section] = row.data || {};
   return map;
@@ -7545,10 +8150,10 @@ async function readSettingsMap() {
 
 async function saveSettingSection(section, data) {
   await pool.query(
-    `INSERT INTO admin_settings (section, data, updated_at)
-     VALUES ($1, $2::jsonb, NOW())
-     ON CONFLICT (section) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-    [section, JSON.stringify(data)]
+    `INSERT INTO admin_settings (section, data, updated_at, business_id)
+     VALUES ($1, $2::jsonb, NOW(), $3)
+     ON CONFLICT (business_id, section) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+    [section, JSON.stringify(data), negocioActual()]
   );
 }
 
@@ -7641,7 +8246,7 @@ app.get('/api/admin/hours', (req, res) => {
   res.json({ ok: true, hours: weeklyHours(readDb()), custom: Boolean(readDb().hours) });
 });
 
-app.put('/api/admin/hours', (req, res) => {
+app.put('/api/admin/hours', async (req, res) => {
   try {
     const input = req.body?.hours;
     if (!input || typeof input !== 'object') {
@@ -7689,7 +8294,7 @@ app.put('/api/admin/hours', (req, res) => {
     const db = readDb();
     db.hoursConfig = config;
     db.hours = periods;
-    writeDb(db);
+    await writeDb(db);
     res.json({ ok: true, hours: config });
   } catch (error) {
     console.error('ERROR GUARDANDO HORARIOS:', error);
@@ -7726,7 +8331,7 @@ app.put('/api/admin/business', async (req, res) => {
     const db = readDb();
     db.business = { ...db.business, name: data.name, phone: data.phone,
       email: data.email, address: data.address, description: data.description };
-    writeDb(db);
+    await writeDb(db);
 
     res.json({ ok: true, business: data });
   } catch (error) {
@@ -7757,14 +8362,14 @@ function applyBarberFields(db, barber, body, isNew) {
   return null;
 }
 
-app.post('/api/admin/barbers', (req, res) => {
+app.post('/api/admin/barbers', async (req, res) => {
   try {
     const db = readDb();
     const barber = { id: createId('barber'), active: true, acceptsBookings: true, serviceIds: [] };
     const error = applyBarberFields(db, barber, req.body || {}, true);
     if (error) return res.status(400).json({ ok: false, error });
     db.barbers.push(barber);
-    writeDb(db);
+    await writeDb(db);
     res.status(201).json({ ok: true, barber });
   } catch (error) {
     console.error('ERROR CREANDO BARBERO:', error);
@@ -7772,7 +8377,7 @@ app.post('/api/admin/barbers', (req, res) => {
   }
 });
 
-app.patch('/api/admin/barbers/:id', (req, res) => {
+app.patch('/api/admin/barbers/:id', async (req, res) => {
   try {
     const db = readDb();
     const barber = db.barbers.find(b => String(b.id) === String(req.params.id));
@@ -7786,7 +8391,7 @@ app.patch('/api/admin/barbers/:id', (req, res) => {
       b.barberId === barber.id && b.status !== 'cancelled' &&
       b.status !== 'completed' && String(b.date) >= today).length;
 
-    writeDb(db);
+    await writeDb(db);
     res.json({ ok: true, barber, upcomingBookings: upcoming });
   } catch (error) {
     console.error('ERROR EDITANDO BARBERO:', error);
@@ -7800,7 +8405,8 @@ app.get('/api/admin/media', async (req, res) => {
   try {
     await ensureMediaTable();
     const r = await pool.query(
-      'SELECT id, kind, created_at, updated_at FROM media_assets ORDER BY created_at ASC');
+      'SELECT id, kind, created_at, updated_at FROM media_assets WHERE business_id = $1 ORDER BY created_at ASC',
+      [negocioActual()]);
     res.json({ ok: true, media: r.rows });
   } catch (error) {
     console.error('ERROR LISTANDO MEDIA:', error);
@@ -7835,10 +8441,10 @@ app.post('/api/admin/media', async (req, res) => {
 
     await ensureMediaTable();
     await pool.query(
-      `INSERT INTO media_assets (id, kind, data, created_at, updated_at)
-       VALUES ($1, $2, $3, NOW(), NOW())
-       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [id, kind, image]
+      `INSERT INTO media_assets (id, kind, data, created_at, updated_at, business_id)
+       VALUES ($1, $2, $3, NOW(), NOW(), $4)
+       ON CONFLICT (business_id, id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [id, kind, image, negocioActual()]
     );
     res.json({ ok: true, id, kind });
   } catch (error) {
@@ -7852,7 +8458,7 @@ app.delete('/api/admin/media/:id', async (req, res) => {
   try {
     await ensureMediaTable();
     const id = String(req.params.id).replace(/[^A-Za-z0-9_-]/g, '');
-    const r = await pool.query('DELETE FROM media_assets WHERE id = $1', [id]);
+    const r = await pool.query('DELETE FROM media_assets WHERE id = $1 AND business_id = $2', [id, negocioActual()]);
     res.json({ ok: true, deleted: r.rowCount || 0 });
   } catch (error) {
     console.error('ERROR ELIMINANDO IMAGEN:', error);
@@ -7864,7 +8470,7 @@ app.get('/api/public/media/:id', async (req, res) => {
   try {
     await ensureMediaTable();
     const id = String(req.params.id).replace(/[^A-Za-z0-9_-]/g, '');
-    const r = await pool.query('SELECT data FROM media_assets WHERE id = $1', [id]);
+    const r = await pool.query('SELECT data FROM media_assets WHERE id = $1 AND business_id = $2', [id, negocioActual()]);
     if (!r.rows.length) return res.status(404).end();
     const data = r.rows[0].data;
     const match = /^data:(image\/(?:jpeg|png|webp));base64,/.exec(data);
@@ -7887,7 +8493,7 @@ app.get('/api/admin/backup', async (req, res) => {
     const db = readDb();
     let settings = {};
     try { settings = await readSettingsMap(); } catch (error) { console.error('ERROR LEYENDO SETTINGS PARA RESPALDO:', error); }
-    const backup = { version: 1, generatedAt: new Date().toISOString(), business: db.business || {}, barbers: db.barbers || [], services: db.services || [], schedule: db.schedule || {}, hoursConfig: db.hoursConfig || {}, bookings: db.bookings || [], settings };
+    const backup = { version: 1, generatedAt: new Date().toISOString(), business: db.business || {}, barbers: db.barbers || [], services: db.services || [], schedule: db.schedule || {}, hoursConfig: db.hoursConfig || {}, hours: db.hours || {}, agendaSettings: db.settings || {}, bookings: db.bookings || [], settings };
     const stamp = localDateParts(0);
     res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="el-master-respaldo-${stamp}.json"`, 'Cache-Control': 'no-store' });
     res.send(JSON.stringify(backup, null, 2));
@@ -7908,7 +8514,8 @@ app.get('/api/public/site', async (req, res) => {
     await ensureMediaTable();
     s = await readSettingsMap();
     media = (await pool.query(
-      'SELECT id, kind, updated_at FROM media_assets ORDER BY created_at ASC')).rows;
+      'SELECT id, kind, updated_at FROM media_assets WHERE business_id = $1 ORDER BY created_at ASC',
+      [negocioActual()])).rows;
   } catch (error) {
     console.error('ERROR /api/public/site (PostgreSQL):', error);
   }
@@ -8030,8 +8637,20 @@ app.get('/api/availability', (req, res) => {
 
 /* ---------------- CREAR RESERVA WEB (uno o varios servicios) ---------------- */
 
-app.post('/api/bookings', (req, res) => {
+app.post('/api/bookings', async (req, res) => {
   try {
+    /* Suscripción vencida o suspendida: se conservan los datos y las reservas, pero no se aceptan nuevas. */
+    if (plataforma) {
+      const sus = await plataforma.suscripcion(negocioActual());
+      if (sus && !sus.canBook) {
+        return res.status(403).json({
+          ok: false,
+          code: 'SUSCRIPCION_VENCIDA',
+          error: 'Esta barbería no está recibiendo reservas en línea en este momento.'
+        });
+      }
+    }
+
     const { name, phone, barberId, date, time } = req.body || {};
     const ids = parseServiceIds(req.body?.serviceIds ?? req.body?.serviceId);
 
@@ -8077,7 +8696,7 @@ app.post('/api/bookings', (req, res) => {
     });
 
     const booking = {
-      id: `BK-${Date.now()}`,
+      id: nuevoIdReserva(),
       name: cleanName,
       phone: cleanPhone,
       serviceId: ids[0],
@@ -8097,9 +8716,12 @@ app.post('/api/bookings', (req, res) => {
     };
 
     db.bookings.push(booking);
-    writeDb(db);
+    await writeDb(db);
     res.status(201).json({ ok: true, booking });
   } catch (error) {
+    if (error instanceof ErrorConflictoHorario) {
+      return res.status(409).json({ ok: false, error: 'Ese horario acaba de ocuparse. Elige otro.' });
+    }
     console.error('ERROR CREANDO RESERVA WEB:', error);
     res.status(500).json({ ok: false, error: 'No se pudo crear la reserva' });
   }
@@ -9275,9 +9897,68 @@ app.post(
         );
 
 
-        writeDB(
-          fresh
-        );
+        /*
+          La reserva solo se confirma al cliente cuando quedó
+          guardada. Si otro cliente tomó el horario en ese
+          instante, se piden otras opciones como antes.
+        */
+        try {
+
+          await writeDB(
+            fresh
+          );
+
+        } catch (saveError) {
+
+          if (
+            saveError instanceof
+            ErrorConflictoHorario
+          ) {
+
+            limpiarHorarios(
+              session
+            );
+
+            session.data
+              .requestedTime =
+              null;
+
+            session.step =
+              'time';
+
+            saveSession(
+              from,
+              session
+            );
+
+            return sendWhatsApp(
+
+              from,
+
+              '⚠️ Uno de esos horarios acaba de ocuparse antes de confirmar.\n\n' +
+
+              'Dime otra hora y buscaré nuevamente opciones para todos los turnos.'
+
+            );
+
+          }
+
+          console.error(
+            'ERROR GUARDANDO RESERVA DE ELIA:',
+            saveError
+          );
+
+          return sendWhatsApp(
+
+            from,
+
+            '⚠️ No pude guardar tu reserva por un problema técnico.\n\n' +
+
+            'Escribe *CONFIRMAR* en unos minutos para intentarlo de nuevo.'
+
+          );
+
+        }
 
 
         resetSession(
@@ -10246,6 +10927,15 @@ app.get(
         database:
           'connected',
 
+        storage:
+          almacen.info().modo,
+
+        businessId:
+          almacen.info().negocio,
+
+        overlapConstraint:
+          almacen.info().restriccionSolapes,
+
         timestamp:
           new Date()
             .toISOString()
@@ -10270,6 +10960,775 @@ app.get(
 
   }
 );
+
+
+/* =========================================================
+   CUENTAS: REGISTRO, ACCESO Y RECUPERACIÓN
+   Las respuestas nunca incluyen el identificador de sesión
+   (va solo en la cookie HttpOnly) ni revelan si un correo
+   está registrado.
+========================================================= */
+
+function datosCliente(req) {
+
+  return {
+    ip: req.ip,
+    userAgent: req.headers['user-agent']
+  };
+
+}
+
+function responderErrorAuth(res, error, contexto) {
+
+  if (error instanceof ErrorAuth) {
+
+    const cuerpo = {
+      ok: false,
+      error: error.message,
+      code: error.code
+    };
+
+    if (error.negocios) cuerpo.businesses = error.negocios;
+
+    return res.status(error.status).json(cuerpo);
+
+  }
+
+  console.error(`ERROR ${contexto}:`, error);
+
+  return res.status(500).json({
+    ok: false,
+    error: 'No se pudo completar la operación'
+  });
+
+}
+
+function requiereAutenticacion(res) {
+
+  if (!autenticacion) {
+
+    res.status(503).json({
+      ok: false,
+      error: 'Las cuentas requieren PostgreSQL'
+    });
+
+    return false;
+
+  }
+
+  return true;
+
+}
+
+function descripcionSesion(sesion) {
+
+  return {
+    ok: true,
+    user: sesion.usuario,
+    business: sesion.negocio,
+    role: sesion.rol,
+    roleName: NOMBRES_ROL[sesion.rol] || sesion.rol,
+    barberId: sesion.barberId || null,
+    twoFactor: Boolean(sesion.dosPasos),
+    permissions: [...permisosDe(sesion.rol)]
+  };
+
+}
+
+const SEGUNDOS_SESION = 14 * 24 * 3600;
+
+app.post('/api/auth/registro', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  if (!registroAbierto()) {
+    return res.status(403).json({ ok: false, error: 'El registro de nuevas barberías no está disponible' });
+  }
+
+  try {
+
+    const r =
+      await autenticacion.registrar(req.body || {}, datosCliente(req));
+
+    if (r.token) {
+      escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+    }
+
+    res.status(201).json({
+      ok: true,
+      verificationRequired: r.verificacionPendiente,
+      emailSent: r.correoEnviado,
+      user: r.usuario,
+      business: r.negocio,
+      role: r.rol
+    });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'REGISTRANDO CUENTA');
+
+  }
+
+});
+
+app.post('/api/auth/login', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    const b = req.body || {};
+
+    const r =
+      await autenticacion.iniciarSesion(
+        { email: b.email, password: b.password, businessId: b.businessId },
+        datosCliente(req)
+      );
+
+    /* Falta el segundo paso: el desafío va en una cookie HttpOnly de 5 minutos. */
+    if (r.requiereDosPasos) {
+      res.append(
+        'Set-Cookie',
+        `${COOKIE_DOS_PASOS}=${encodeURIComponent(r.desafio)}; Path=/api/auth; HttpOnly; SameSite=Strict; Max-Age=300` +
+        (cookieSegura(req) ? '; Secure' : '')
+      );
+      return res.status(202).json({ ok: true, twoFactorRequired: true });
+    }
+
+    /* Una sesión anterior en este navegador se cierra. */
+    if (req.tokenSesion) {
+      await autenticacion.cerrarSesion(req.tokenSesion).catch(() => {});
+    }
+
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+
+    res.json({
+      ok: true,
+      user: r.usuario,
+      business: r.negocio,
+      role: r.rol
+    });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'INICIANDO SESIÓN');
+
+  }
+
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+
+  try {
+
+    if (autenticacion && req.tokenSesion) {
+      await autenticacion.cerrarSesion(req.tokenSesion, datosCliente(req));
+    }
+
+  } catch (error) {
+
+    console.error('ERROR CERRANDO SESIÓN:', error.message);
+
+  }
+
+  escribirCookieSesion(req, res, '', 0);
+
+  res.json({ ok: true });
+
+});
+
+app.get('/api/auth/sesion', async (req, res) => {
+
+  res.set('Cache-Control', 'no-store');
+
+  if (!req.sesion) {
+    return res.status(401).json({ ok: false, error: 'No has iniciado sesión' });
+  }
+
+  const descripcion = descripcionSesion(req.sesion);
+
+  /* Estado de la suscripción para el aviso de renovación del panel. */
+  if (plataforma && !req.sesion.local) {
+    try {
+      descripcion.subscription = await plataforma.suscripcion(req.sesion.negocio.id);
+    } catch (error) {
+      console.error('ERROR LEYENDO SUSCRIPCIÓN:', error.message);
+    }
+  }
+
+  res.json(descripcion);
+
+});
+
+app.post('/api/auth/recuperar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    await autenticacion.solicitarRecuperacion(req.body?.email, datosCliente(req));
+
+  } catch (error) {
+
+    if (error instanceof ErrorAuth && error.status === 429) {
+      return responderErrorAuth(res, error, 'RECUPERANDO');
+    }
+
+    console.error('ERROR SOLICITANDO RECUPERACIÓN:', error.message);
+
+  }
+
+  res.json({
+    ok: true,
+    message: 'Si el correo está registrado, recibirás un enlace para crear una nueva contraseña.'
+  });
+
+});
+
+app.post('/api/auth/restablecer', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    await autenticacion.restablecerClave(req.body?.token, req.body?.password, datosCliente(req));
+
+    res.json({ ok: true, message: 'Contraseña actualizada. Ya puedes iniciar sesión.' });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'RESTABLECIENDO CONTRASEÑA');
+
+  }
+
+});
+
+app.post('/api/auth/cambiar-clave', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  if (!req.sesion || req.sesion.local) {
+    return res.status(401).json({ ok: false, error: 'Inicia sesión para continuar' });
+  }
+
+  try {
+
+    await autenticacion.cambiarClave(
+      req.sesion, req.body?.currentPassword, req.body?.newPassword, req.tokenSesion, datosCliente(req));
+
+    res.json({ ok: true, message: 'Contraseña actualizada. Las demás sesiones se cerraron.' });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'CAMBIANDO CONTRASEÑA');
+
+  }
+
+});
+
+
+const COOKIE_DOS_PASOS = 'mr_dos_pasos';
+
+/* Qué ofrece la pantalla de acceso (sin datos sensibles). */
+app.get('/api/auth/config', (req, res) => {
+
+  res.set('Cache-Control', 'no-store');
+
+  res.json({
+    ok: true,
+    accounts: Boolean(autenticacion),
+    registrationOpen: Boolean(autenticacion) && registroAbierto(),
+    emailVerification: process.env.VERIFICAR_CORREO !== '0',
+    twoFactorAvailable: Boolean(autenticacion && autenticacion.disponibleDosPasos())
+  });
+
+});
+
+app.post('/api/auth/verificar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    await autenticacion.confirmarCorreo(req.body?.token, datosCliente(req));
+
+    res.json({ ok: true, message: 'Correo confirmado. Ya puedes iniciar sesión.' });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'VERIFICANDO CORREO');
+
+  }
+
+});
+
+app.post('/api/auth/verificacion/reenviar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    await autenticacion.reenviarVerificacion(req.body?.email, datosCliente(req));
+
+  } catch (error) {
+
+    if (error instanceof ErrorAuth && error.status === 429) {
+      return responderErrorAuth(res, error, 'REENVIANDO VERIFICACIÓN');
+    }
+
+    console.error('ERROR REENVIANDO VERIFICACIÓN:', error.message);
+
+  }
+
+  res.json({
+    ok: true,
+    message: 'Si la cuenta está pendiente de confirmar, enviamos un nuevo enlace a ese correo.'
+  });
+
+});
+
+app.post('/api/auth/2fa/verificar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    const r =
+      await autenticacion.completarDosPasos(
+        leerCookie(req, COOKIE_DOS_PASOS), req.body?.code, datosCliente(req));
+
+    res.append('Set-Cookie', `${COOKIE_DOS_PASOS}=; Path=/api/auth; HttpOnly; SameSite=Strict; Max-Age=0`);
+
+    if (req.tokenSesion) {
+      await autenticacion.cerrarSesion(req.tokenSesion).catch(() => {});
+    }
+
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+
+    res.json({ ok: true, user: r.usuario, business: r.negocio, role: r.rol });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'VERIFICANDO SEGUNDO PASO');
+
+  }
+
+});
+
+/* Gestión de la verificación en dos pasos de la propia cuenta. */
+function sesionPropia(req, res) {
+
+  if (!requiereAutenticacion(res)) return null;
+
+  if (!req.sesion || req.sesion.local) {
+    res.status(401).json({ ok: false, error: 'Inicia sesión para continuar' });
+    return null;
+  }
+
+  return req.sesion;
+
+}
+
+app.get('/api/auth/2fa', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    res.json({ ok: true, ...(await autenticacion.estadoDosPasos(sesion)) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'CONSULTANDO DOS PASOS');
+  }
+
+});
+
+app.post('/api/auth/2fa/iniciar', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, ...(await autenticacion.iniciarDosPasos(sesion, datosCliente(req))) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'INICIANDO DOS PASOS');
+  }
+
+});
+
+app.post('/api/auth/2fa/activar', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, ...(await autenticacion.activarDosPasos(sesion, req.body?.code, datosCliente(req))) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'ACTIVANDO DOS PASOS');
+  }
+
+});
+
+app.post('/api/auth/2fa/desactivar', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    await autenticacion.desactivarDosPasos(sesion, req.body?.password, req.body?.code, datosCliente(req));
+    res.json({ ok: true });
+  } catch (error) {
+    responderErrorAuth(res, error, 'DESACTIVANDO DOS PASOS');
+  }
+
+});
+
+
+/* ---------------- USUARIOS DE LA BARBERÍA ---------------- */
+
+app.get('/api/admin/usuarios', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    res.json({ ok: true, users: await autenticacion.listarUsuarios(negocioActual()) });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'LISTANDO USUARIOS');
+
+  }
+
+});
+
+app.post('/api/admin/usuarios', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    const r =
+      await autenticacion.invitarUsuario(sesionActual(), req.body || {}, readDb(), datosCliente(req));
+
+    res.status(201).json({ ok: true, invitation: r.invitacion, emailSent: r.correoEnviado });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'AGREGANDO USUARIO');
+
+  }
+
+});
+
+app.get('/api/admin/invitaciones', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    res.json({ ok: true, invitations: await autenticacion.listarInvitaciones(negocioActual()) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'LISTANDO INVITACIONES');
+  }
+
+});
+
+app.post('/api/admin/invitaciones/:id/reenviar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    const r = await autenticacion.reenviarInvitacion(sesionActual(), req.params.id, datosCliente(req));
+    res.json({ ok: true, invitation: r.invitacion, emailSent: r.correoEnviado });
+  } catch (error) {
+    responderErrorAuth(res, error, 'REENVIANDO INVITACIÓN');
+  }
+
+});
+
+app.post('/api/admin/invitaciones/:id/revocar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    await autenticacion.revocarInvitacion(sesionActual(), req.params.id, datosCliente(req));
+    res.json({ ok: true });
+  } catch (error) {
+    responderErrorAuth(res, error, 'REVOCANDO INVITACIÓN');
+  }
+
+});
+
+
+/* ---------------- INVITACIONES (persona invitada) ---------------- */
+
+app.post('/api/auth/invitacion/consultar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, invitation: await autenticacion.consultarInvitacion(req.body?.token, datosCliente(req)) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'CONSULTANDO INVITACIÓN');
+  }
+
+});
+
+app.post('/api/auth/invitacion/aceptar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    const b = req.body || {};
+    const r = await autenticacion.aceptarInvitacion(
+      b.token, { name: b.name, password: b.password, code: b.code }, datosCliente(req));
+
+    if (req.tokenSesion) {
+      await autenticacion.cerrarSesion(req.tokenSesion).catch(() => {});
+    }
+
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+    res.json({ ok: true, user: r.usuario, business: r.negocio, role: r.rol });
+  } catch (error) {
+    responderErrorAuth(res, error, 'ACEPTANDO INVITACIÓN');
+  }
+
+});
+
+app.post('/api/auth/invitacion/rechazar', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+    await autenticacion.rechazarInvitacion(req.body?.token, datosCliente(req));
+    res.json({ ok: true });
+  } catch (error) {
+    responderErrorAuth(res, error, 'RECHAZANDO INVITACIÓN');
+  }
+
+});
+
+app.get('/api/auth/invitaciones', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    res.json({ ok: true, invitations: await autenticacion.misInvitaciones(sesion) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'LISTANDO MIS INVITACIONES');
+  }
+
+});
+
+app.post('/api/auth/invitaciones/:id/:accion', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  if (!['aceptar', 'rechazar'].includes(req.params.accion)) {
+    return res.status(404).json({ ok: false, error: 'Ruta API no encontrada' });
+  }
+
+  try {
+    const r = await autenticacion.responderMiInvitacion(
+      sesion, req.params.id, req.params.accion === 'aceptar', datosCliente(req));
+    res.json({ ok: true, business: { id: r.businessId, name: r.businessName } });
+  } catch (error) {
+    responderErrorAuth(res, error, 'RESPONDIENDO INVITACIÓN');
+  }
+
+});
+
+/* Barberías de la sesión y cambio entre ellas (misma persona). */
+app.get('/api/auth/barberias', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    const lista = await autenticacion.negociosDeUsuario(sesion.usuario.id);
+    res.json({ ok: true, businesses: lista.map(n => ({ id: n.id, name: n.name, role: n.role, current: n.id === sesion.negocio.id })) });
+  } catch (error) {
+    responderErrorAuth(res, error, 'LISTANDO BARBERÍAS');
+  }
+
+});
+
+app.post('/api/auth/cambiar-barberia', async (req, res) => {
+
+  const sesion = sesionPropia(req, res);
+  if (!sesion) return;
+
+  try {
+    const r = await autenticacion.cambiarNegocio(sesion, req.tokenSesion, req.body?.businessId, datosCliente(req));
+    escribirCookieSesion(req, res, r.token, SEGUNDOS_SESION);
+    res.json({ ok: true, business: r.negocio, role: r.rol });
+  } catch (error) {
+    responderErrorAuth(res, error, 'CAMBIANDO DE BARBERÍA');
+  }
+
+});
+
+app.patch('/api/admin/usuarios/:id', async (req, res) => {
+
+  if (!requiereAutenticacion(res)) return;
+
+  try {
+
+    const usuario =
+      await autenticacion.modificarUsuario(sesionActual(), req.params.id, req.body || {}, readDb(), datosCliente(req));
+
+    res.json({ ok: true, user: usuario });
+
+  } catch (error) {
+
+    responderErrorAuth(res, error, 'MODIFICANDO USUARIO');
+
+  }
+
+});
+
+
+/* =========================================================
+   PANEL MAESTRO (fase 6)
+   Comunicación entre servidores. Sin sesión ni cookies: cada
+   petición lleva una firma HMAC con la clave PLATAFORMA_CLAVE
+   (ver firma-plataforma.js), fecha (±5 min) y un nonce de un
+   solo uso. Sin clave configurada, estas rutas no funcionan.
+   El Panel solo recibe datos administrativos y cifras.
+========================================================= */
+
+const verificarFirma =
+  crearVerificador({ claves: () => clavesConfiguradas() });
+
+const fallosPlataforma = new Map();
+
+app.use('/api/plataforma', (req, res, next) => {
+
+  res.set('Cache-Control', 'no-store');
+
+  if (!plataforma) {
+    return res.status(503).json({ ok: false, code: 'SIN_POSTGRES', error: 'Requiere PostgreSQL' });
+  }
+
+  const ip = req.ip || 'desconocida';
+  const ahora = Date.now();
+  const fallos = fallosPlataforma.get(ip);
+
+  if (fallos && ahora - fallos.desde > 15 * 60 * 1000) fallosPlataforma.delete(ip);
+  else if (fallos && fallos.n >= 20) {
+    return res.status(429).json({ ok: false, code: 'DEMASIADOS_INTENTOS', error: 'Demasiadas firmas no válidas. Espera 15 minutos.' });
+  }
+
+  const r = verificarFirma({
+    metodo: req.method,
+    ruta: req.originalUrl,
+    cuerpo: req.cuerpoCrudo || '',
+    cabeceras: req.headers
+  });
+
+  if (!r.ok) {
+
+    if (r.motivo === 'NO_CONFIGURADA') {
+      return res.status(503).json({ ok: false, code: 'PLATAFORMA_NO_CONFIGURADA', error: 'La conexión con el Panel Maestro no está configurada' });
+    }
+
+    const f = fallosPlataforma.get(ip) || { n: 0, desde: ahora };
+    f.n++;
+    fallosPlataforma.set(ip, f);
+    if (fallosPlataforma.size > 10000) fallosPlataforma.clear();
+
+    console.warn(`PLATAFORMA: petición rechazada (${r.motivo}) desde ${ip}`);
+    return res.status(401).json({ ok: false, code: 'FIRMA_INVALIDA', error: 'Petición no autorizada' });
+
+  }
+
+  next();
+
+});
+
+function responderErrorPlataforma(res, error, contexto) {
+
+  if (error instanceof ErrorPlataforma) {
+    return res.status(error.status).json({ ok: false, code: error.code, error: error.message });
+  }
+
+  console.error(`ERROR PLATAFORMA (${contexto}):`, error.message);
+  return res.status(500).json({ ok: false, error: 'No se pudo completar la operación' });
+
+}
+
+app.get('/api/plataforma/estado', async (req, res) => {
+  try {
+    const lista = await plataforma.listarNegocios();
+    res.json({ ok: true, version: 1, businesses: lista.length });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'ESTADO');
+  }
+});
+
+app.get('/api/plataforma/negocios', async (req, res) => {
+  try {
+    res.json({ ok: true, businesses: await plataforma.listarNegocios() });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'NEGOCIOS');
+  }
+});
+
+app.get('/api/plataforma/negocios/:id', async (req, res) => {
+  try {
+    res.json({ ok: true, business: await plataforma.negocio(req.params.id) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'NEGOCIO');
+  }
+});
+
+app.put('/api/plataforma/negocios/:id/suscripcion', async (req, res) => {
+  try {
+    const sus = await plataforma.aplicarSuscripcion(req.params.id, req.body || {});
+    console.log(`PLATAFORMA: suscripción de ${req.params.id} → ${sus.storedStatus} (versión ${sus.version})`);
+    res.json({ ok: true, subscription: sus });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'SUSCRIPCIÓN');
+  }
+});
+
+app.put('/api/plataforma/planes', async (req, res) => {
+  try {
+    res.json({ ok: true, plans: await plataforma.sincronizarPlanes(req.body?.plans) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'PLANES');
+  }
+});
+
+app.get('/api/plataforma/eventos', async (req, res) => {
+  try {
+    res.json({ ok: true, events: await plataforma.eventosPendientes(req.query.limite) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'EVENTOS');
+  }
+});
+
+app.post('/api/plataforma/eventos/confirmar', async (req, res) => {
+  try {
+    res.json({ ok: true, confirmed: await plataforma.confirmarEventos(req.body?.ids) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'CONFIRMAR EVENTOS');
+  }
+});
+
+/* Planes disponibles para la pantalla de registro (solo nombre, precio y días de prueba). */
+app.get('/api/public/planes', async (req, res) => {
+  try {
+    const planes = plataforma ? (await plataforma.catalogo()).filter(p => p.active) : [];
+    res.json({ ok: true, plans: planes.map(p => ({ name: p.name, price: p.price, trialDays: p.trialDays })) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'PLANES PÚBLICOS');
+  }
+});
 
 
 /* =========================================================
@@ -10341,20 +11800,294 @@ app.use(
 
 
 /* =========================================================
-   INICIAR SERVIDOR
+   PREPARAR TABLAS ADMINISTRATIVAS PARA VARIAS BARBERÍAS
+   - Agrega business_id con el valor de la barbería actual.
+   - Cambia las claves únicas para que sean por barbería:
+     caja por (barbería, fecha), configuración por
+     (barbería, sección), imágenes por (barbería, id).
+   No modifica ni borra filas. Es idempotente: se puede
+   ejecutar en cada arranque.
 ========================================================= */
 
-app.listen(
-  PORT,
-  () => {
+async function columnasDeRestriccion(client, tabla, tipo) {
 
-    console.log(
-      `Barbería: http://localhost:${PORT}`
+  const r =
+    await client.query(
+      `SELECT c.conname,
+              array_agg(a.attname::text ORDER BY k.ord) AS columnas
+       FROM pg_constraint c
+       CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+       JOIN pg_attribute a
+         ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+       WHERE c.conrelid = to_regclass($1)
+         AND c.contype = $2
+       GROUP BY c.conname`,
+      [tabla, tipo]
     );
 
-    console.log(
-      'EL MÁSTER RESERVAS INICIADO'
+  return r.rows;
+
+}
+
+
+async function prepararTablasMultiempresa() {
+
+  await ensureMediaTable();
+
+  for (const tabla of [
+    'sales',
+    'cash_sessions',
+    'products',
+    'admin_settings',
+    'media_assets'
+  ]) {
+
+    await pool.query(
+      `ALTER TABLE IF EXISTS ${tabla}
+         ADD COLUMN IF NOT EXISTS business_id TEXT NOT NULL
+         DEFAULT '${DEFAULT_BUSINESS_ID}'`
+    );
+
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS ${tabla}_business_idx
+         ON ${tabla} (business_id)`
+    );
+
+  }
+
+
+  const client =
+    await pool.connect();
+
+  try {
+
+    await client.query('BEGIN');
+
+    /* Una sola instancia cambia las claves a la vez. */
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      ['master-reservas:claves-multiempresa']
+    );
+
+
+    /* Caja: una por barbería y día. */
+    if (await client.query(`SELECT to_regclass('cash_sessions') AS t`).then(r => r.rows[0].t)) {
+
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS cash_sessions_business_date_key
+           ON cash_sessions (business_id, session_date)`
+      );
+
+      for (const u of await columnasDeRestriccion(client, 'cash_sessions', 'u')) {
+
+        if (u.columnas.join(',') === 'session_date') {
+
+          await client.query(
+            `ALTER TABLE cash_sessions DROP CONSTRAINT ${client.escapeIdentifier(u.conname)}`
+          );
+
+        }
+
+      }
+
+    }
+
+
+    /* Configuración e imágenes: clave primaria por barbería. */
+    for (const [tabla, columna] of [
+      ['admin_settings', 'section'],
+      ['media_assets', 'id']
+    ]) {
+
+      const [pk] =
+        await columnasDeRestriccion(client, tabla, 'p');
+
+      if (pk && pk.columnas.join(',') === columna) {
+
+        await client.query(
+          `ALTER TABLE ${tabla}
+             DROP CONSTRAINT ${client.escapeIdentifier(pk.conname)},
+             ADD CONSTRAINT ${tabla}_pkey PRIMARY KEY (business_id, ${columna})`
+        );
+
+      }
+
+    }
+
+
+    if (await client.query(`SELECT to_regclass('sales') AS t`).then(r => r.rows[0].t)) {
+
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS sales_business_date_idx
+           ON sales (business_id, sale_date)`
+      );
+
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS sales_business_booking_idx
+           ON sales (business_id, booking_id)`
+      );
+
+    }
+
+    await client.query('COMMIT');
+
+  } catch (error) {
+
+    await client.query('ROLLBACK').catch(() => {});
+
+    throw error;
+
+  } finally {
+
+    client.release();
+
+  }
+
+}
+
+
+/* =========================================================
+   INICIAR SERVIDOR
+   Con PostgreSQL, el servidor solo empieza a atender cuando
+   la agenda está cargada desde la base. Si la base no
+   responde, reintenta: nunca atiende con datos vacíos.
+========================================================= */
+
+async function prepararAlmacen() {
+
+  if (MODO_ALMACEN === 'archivo') {
+
+    console.warn(
+      'AVISO: sin DATABASE_URL la agenda se guarda en data/db.json. ' +
+      'Usa PostgreSQL en producción para no perder información.'
+    );
+
+    return almacen.iniciar();
+
+  }
+
+
+  await postgresAdministrativoListo;
+
+
+  for (let intento = 1; ; intento++) {
+
+    try {
+
+      await prepararTablasMultiempresa();
+
+      const estado =
+        await almacen.iniciar();
+
+      await plataforma.protegerNegocios(NEGOCIOS_PROTEGIDOS);
+
+      console.log(
+        `AGENDA EN POSTGRESQL LISTA (barbería: ${DEFAULT_BUSINESS_ID}, ` +
+        `restricción de solapes: ${estado.restriccionSolapes})`
+      );
+
+      return estado;
+
+    } catch (error) {
+
+      if (
+        error.code === 'IMPORTACION' ||
+        error.code === 'NEGOCIO_INVALIDO'
+      ) {
+        throw error;
+      }
+
+      const espera =
+        Math.min(
+          30000,
+          1000 * 2 ** Math.min(intento, 5)
+        );
+
+      console.error(
+        `ERROR PREPARANDO LA AGENDA EN POSTGRESQL (intento ${intento}); ` +
+        `reintento en ${espera / 1000} s:`,
+        error.message
+      );
+
+      await new Promise(
+        resolve =>
+          setTimeout(
+            resolve,
+            espera
+          )
+      );
+
+    }
+
+  }
+
+}
+
+
+/* Un error no controlado se registra en lugar de detener el servidor. */
+process.on(
+  'unhandledRejection',
+  error => {
+
+    console.error(
+      'ERROR NO CONTROLADO:',
+      error
     );
 
   }
 );
+
+
+prepararAlmacen()
+  .then(() =>
+    /* Cuenta del propietario de la barbería principal (solo si aún no tiene). */
+    plataforma
+      ? propietarioInicial({
+          pool,
+          autenticacion,
+          negocio: DEFAULT_BUSINESS_ID,
+          email: process.env.PROPIETARIO_INICIAL_EMAIL,
+          clave: process.env.PROPIETARIO_INICIAL_CLAVE,
+          nombre: process.env.PROPIETARIO_INICIAL_NOMBRE || ''
+        })
+      : null
+  )
+  .then(() => {
+
+    app.listen(
+      PORT,
+      () => {
+
+        console.log(
+          `Barbería: http://localhost:${PORT}`
+        );
+
+        if (
+          esProduccion() &&
+          process.env.REGISTRO_ABIERTO === '1' &&
+          !correoListo()
+        ) {
+          console.warn(
+            'AVISO: REGISTRO_ABIERTO=1 pero el correo no está configurado ' +
+            '(RESEND_API_KEY, CORREO_REMITENTE, PUBLIC_BASE_URL): el registro sigue cerrado.'
+          );
+        }
+
+        console.log(
+          'EL MÁSTER RESERVAS INICIADO'
+        );
+
+      }
+    );
+
+  })
+  .catch(error => {
+
+    console.error(
+      'NO SE PUDO INICIAR LA AGENDA:',
+      error.message
+    );
+
+    process.exit(1);
+
+  });

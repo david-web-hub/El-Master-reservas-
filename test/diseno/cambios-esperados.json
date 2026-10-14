@@ -1,0 +1,12 @@
+[
+  {
+    "patron": "^(escritorio|movil)-panel-configuracion\\.png$",
+    "completo": true,
+    "motivo": "Fase 4: dos tarjetas nuevas en Configuración («Mi cuenta» y «Usuarios y roles»)"
+  },
+  {
+    "patron": "^escritorio-(panel|ajustes)-.*\\.png$",
+    "region": [0, 0, 236, null],
+    "motivo": "Fase 4: barra lateral con el nombre de la persona y el botón «Cerrar sesión»"
+  }
+]

@@ -1,0 +1,6 @@
+node_modules/
+# Respaldos y capturas locales: contienen datos de clientes. Nunca se suben al repositorio.
+respaldos/
+capturas/
+huella-*.json
+.env

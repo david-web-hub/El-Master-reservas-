@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check almacen.js && node --check autenticacion.js && node --check correo.js && node --check plataforma.js && node --check firma-plataforma.js && node --check despliegue-inicial.js && node --check scripts/cuentas/crear-propietario.js && node --check scripts/despliegue/inventario.js && node --check scripts/despliegue/limpiar-demo.js && bash -n scripts/respaldo/verificar-restauracion.sh && node --check test/apoyo/servidor.js && node --check test/apoyo/navegador.js && node --check scripts/capturas.js && node --check scripts/respaldo/respaldo-api.js && node --check scripts/respaldo/identificar-base.js && node --check scripts/migracion/comun.js && node --check scripts/migracion/importar.js && node --check scripts/migracion/verificar.js && node --check scripts/migracion/exportar.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

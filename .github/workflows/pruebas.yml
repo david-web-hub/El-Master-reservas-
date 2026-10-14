@@ -1,0 +1,122 @@
+name: Pruebas
+
+# Solo ejecuta pruebas. No despliega nada en Render ni usa secretos reales.
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regresion:
+    name: Regresión (Node 22 + PostgreSQL con SSL, ambos modos)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TEST_DATABASE_URL: postgres://prueba:solo_para_pruebas@localhost:5432/reservas_test
+      # Código que hoy está en producción, para el ensayo de la instalación limpia (test/despliegue.test.js).
+      MASTER_RESERVAS_PRODUCCION: ${{ github.workspace }}/produccion
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descargar main (versión en producción, solo lectura)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: produccion
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # PostgreSQL temporal del propio ejecutor, con SSL como en producción
+      # (server.js exige SSL cuando hay DATABASE_URL).
+      - name: Preparar PostgreSQL de pruebas
+        run: |
+          sudo systemctl start postgresql.service
+          if [ "$(sudo -u postgres psql -Atc 'SHOW ssl')" != "on" ]; then
+            sudo -u postgres psql -c "ALTER SYSTEM SET ssl_cert_file = '/etc/ssl/certs/ssl-cert-snakeoil.pem'"
+            sudo -u postgres psql -c "ALTER SYSTEM SET ssl_key_file = '/etc/ssl/private/ssl-cert-snakeoil.key'"
+            sudo -u postgres psql -c "ALTER SYSTEM SET ssl = on"
+            sudo systemctl restart postgresql.service
+          fi
+          sudo -u postgres psql -c "CREATE USER prueba WITH PASSWORD 'solo_para_pruebas' CREATEDB"
+          sudo -u postgres createdb -O prueba reservas_test
+          sudo -u postgres psql -Atc 'SHOW ssl'
+
+      - name: Instalar dependencias (sin modificar package.json)
+        run: npm install --no-package-lock --no-audit --no-fund
+
+      # Chromium para las pruebas del panel en el navegador (fase 4).
+      - name: Instalar Chromium
+        run: |
+          npm install --no-save --no-package-lock --no-audit --no-fund playwright-core@1.56.1
+          npx playwright-core install --with-deps chromium
+
+      - name: Comprobar sintaxis
+        run: npm run check
+
+      - name: Pruebas de regresión (agenda en archivo + pruebas de PostgreSQL)
+        run: npm test
+
+      - name: Pruebas de regresión (agenda en PostgreSQL)
+        env:
+          TEST_ALMACEN: postgres
+        run: npm test
+
+  diseno:
+    name: Diseño sin cambios respecto a main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TEST_DATABASE_URL: postgres://prueba:solo_para_pruebas@localhost:5432/reservas_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Preparar PostgreSQL de pruebas
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "CREATE USER prueba WITH PASSWORD 'solo_para_pruebas' CREATEDB"
+
+      - name: Instalar dependencias y Chromium
+        run: |
+          npm install --no-package-lock --no-audit --no-fund
+          npm install --no-save --no-package-lock --no-audit --no-fund playwright-core@1.56.1
+          npx playwright-core install --with-deps chromium
+
+      - name: Capturas de main (antes)
+        run: |
+          git worktree add ../base origin/main
+          sudo -u postgres dropdb --if-exists reservas_test
+          sudo -u postgres createdb -O prueba reservas_test
+          MASTER_RESERVAS_RAIZ=../base node scripts/capturas.js capturar capturas/antes
+
+      - name: Capturas de esta versión (después)
+        run: |
+          sudo -u postgres dropdb --if-exists reservas_test
+          sudo -u postgres createdb -O prueba reservas_test
+          node scripts/capturas.js capturar capturas/despues
+
+      # Solo se aceptan los cambios de diseño aprobados en test/diseno/cambios-esperados.json.
+      - name: Comparar
+        run: node scripts/capturas.js comparar capturas/antes capturas/despues 0.1 --esperados test/diseno/cambios-esperados.json
+
+      - name: Guardar capturas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capturas-diseno
+          path: capturas/
+          retention-days: 14
