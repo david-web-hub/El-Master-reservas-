@@ -52,6 +52,8 @@ test.describe('Fase 6 · aviso de suscripción en el panel', () => {
       `INSERT INTO businesses (id, slug, name, status, plan, trial_ends_at, current_period_end, origin)
        VALUES ($1, $1, $2, $3, 'Pro', $4, $5, 'registro')`,
       [id, 'Barbería ' + id, estado.status, estado.trialEndsAt || null, estado.currentPeriodEnd || null]);
+    /* Como crearNegocio: toda barbería tiene su aviso de alta para el Panel Maestro. */
+    await pool.query(`INSERT INTO platform_events (business_id, type, payload) VALUES ($1, 'business.created', '{}'::jsonb)`, [id]);
     const correo = `${id}@prueba.test`;
     await crearCuenta(id, correo, CLAVE, 'owner');
     return correo;
@@ -122,11 +124,12 @@ test.describe('Fase 6 · aviso de suscripción en el panel', () => {
     const page = await ctx.newPage();
     const correo = `panel-${unico()}@prueba.test`;
     try {
-      const q = new URLSearchParams({ plan: 'Pro', negocio: 'Barbería Desde Panel', nombre: 'Rosa', correo, telefono: '+593 99 000 0000', pais: 'Colombia' });
+      const nombreNegocio = 'Barbería Desde Panel ' + unico();
+      const q = new URLSearchParams({ plan: 'Pro', negocio: nombreNegocio, nombre: 'Rosa', correo, telefono: '+593 99 000 0000', pais: 'Colombia' });
       await page.goto(`${s.base}/acceso.html?${q}#registro`);
       await page.waitForSelector('#reg-plan:not(.oculto)');
       assert.equal(await page.textContent('#reg-plan'), 'Plan Pro · $19.99 al mes · 7 días de prueba gratis');
-      assert.equal(await page.inputValue('#reg-negocio'), 'Barbería Desde Panel');
+      assert.equal(await page.inputValue('#reg-negocio'), nombreNegocio);
       assert.equal(await page.inputValue('#reg-email'), correo);
       assert.equal(await page.inputValue('#reg-clave'), '', 'la contraseña nunca viaja en el enlace');
       assert.match(await page.inputValue('#reg-pais'), /^CO\|/);
