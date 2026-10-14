@@ -12,6 +12,11 @@ MVP funcional preparado para:
 - Webhook de WhatsApp Cloud API.
 - Flujo conversacional por WhatsApp que consulta disponibilidad y crea la cita.
 
+## Varias barberías (fase 7)
+
+- Cada barbería registrada tiene su panel, su página pública de reservas en `/b/<dirección>/` y, si lo conecta, su propio WhatsApp con Elia (Configuración → WhatsApp y Elia). La barbería principal (El Máster) sigue en `/`.
+- Informe: `docs/fase-7/INFORME.md`. Correo (Resend), Meta, variables y despliegue: `docs/despliegue/FASE-7.md`.
+
 ## Probar localmente
 1. Instala Node.js 18+.
 2. Copia `.env.example` a `.env`.

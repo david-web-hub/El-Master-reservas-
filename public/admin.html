@@ -1379,7 +1379,7 @@ textarea {
       </div>
 
       <div>
-        <strong>EL MÁSTER</strong>
+        <strong id="brandName">EL MÁSTER</strong>
         <small>Barbería</small>
       </div>
 
@@ -5523,6 +5523,20 @@ const settings = [
   ],
 
   [
+    'enlace',
+    '🔗',
+    'Tu página de reservas',
+    'Enlace para que tus clientes reserven en línea.'
+  ],
+
+  [
+    'whatsapp',
+    '💬',
+    'WhatsApp y Elia',
+    'Conecta el número de WhatsApp de tu barbería.'
+  ],
+
+  [
     'cuenta',
     '👤',
     'Mi cuenta',
@@ -5643,6 +5657,18 @@ function openSetting(key) {
 
   if (key === 'cuenta') {
     renderAccountSettings();
+    return;
+  }
+
+  if (key === 'enlace') {
+    renderPublicLinkSettings();
+    return;
+  }
+
+  if (key === 'whatsapp') {
+    $('settingContent').innerHTML =
+      '<div class="empty">Cargando…</div>';
+    renderWhatsAppSettings();
     return;
   }
 
@@ -7597,7 +7623,7 @@ function renderMessageSettings() {
     <div class="switch-row"><div><strong>Elia activa</strong><div class="label">Permite que el asistente atienda mensajes de WhatsApp.</div></div>
       <label class="switch"><input type="checkbox" id="mEnabled" ${m.enabled === false ? '' : 'checked'}><span class="slider"></span></label></div>
     <div class="field" style="margin-top:14px"><label>Mensaje de bienvenida</label>
-      <textarea class="textarea" id="mWelcome" maxlength="500">${esc(m.welcome || '👋 ¡Hola! Bienvenido a El Máster 💈\n\nCon gusto puedo ayudarte.\nDime cuántos turnos deseas reservar.')}</textarea></div>
+      <textarea class="textarea" id="mWelcome" maxlength="500">${esc(m.welcome || '👋 ¡Hola! Bienvenido a ' + (currentSession?.principal === false && currentSession.business?.name ? currentSession.business.name : 'El Máster') + ' 💈\n\nCon gusto puedo ayudarte.\nDime cuántos turnos deseas reservar.')}</textarea></div>
     <div class="field" style="margin-top:12px"><label>Mensaje de despedida</label>
       <textarea class="textarea" id="mClosing" maxlength="500">${esc(m.closing || '😊 ¡Con gusto! Fue un placer atenderte.\n\nCuando necesites otra cita, escríbeme “quiero reservar”. 💈')}</textarea></div>
     <div class="field" style="margin-top:12px"><label>Mensaje de cancelación</label>
@@ -8018,6 +8044,7 @@ function visiblePages() {
 function settingAllowed(key) {
   if (key === 'usuarios') return Boolean(currentSession) && !currentSession.local && can('usuarios.ver');
   if (key === 'cuenta') return true;
+  if (key === 'enlace') return Boolean(currentSession?.publicUrl);
   return can('configuracion') || (key === 'datos' && can('respaldo'));
 }
 
@@ -8098,6 +8125,12 @@ function renderSessionUi() {
   `;
   box.hidden = false;
 
+  /* Otras barberías: su propio nombre (la principal conserva su marca). */
+  if (currentSession.principal === false && currentSession.business?.name) {
+    $('brandName').textContent = currentSession.business.name.toUpperCase();
+    document.title = currentSession.business.name + ' | Administración';
+  }
+
   const active = document.querySelector('.section.active')?.id || 'inicio';
   initNav();
   if (!visiblePages().some(page => page[0] === active)) {
@@ -8117,6 +8150,129 @@ async function logout() {
   }
   redirigiendoAcceso = true;
   location.replace('/acceso.html');
+}
+
+/* ---------- Página pública de reservas ---------- */
+function renderPublicLinkSettings() {
+  const url = currentSession?.publicUrl || '';
+  const mensaje = `Reserva tu turno en ${currentSession?.business?.name || 'nuestra barbería'}: ${url}`;
+  $('settingContent').innerHTML = `
+    <p class="label">Comparte este enlace con tus clientes: ven tus servicios, tus barberos y los horarios libres, y reservan sin llamarte. Las reservas llegan a tu Agenda.</p>
+    <div class="form-grid">
+      <div class="field" style="grid-column:1/-1"><label for="publicLinkInput">Tu enlace</label>
+        <input class="input" id="publicLinkInput" value="${esc(url)}" readonly></div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-gold" id="publicLinkCopy">Copiar enlace</button>
+      <a class="btn btn-dark" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Abrir mi página</a>
+      <a class="btn btn-dark" href="https://wa.me/?text=${encodeURIComponent(mensaje)}" target="_blank" rel="noopener noreferrer">Compartir por WhatsApp</a>
+    </div>`;
+  $('publicLinkCopy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Enlace copiado');
+    } catch (error) {
+      $('publicLinkInput').select();
+      toast('Selecciona el enlace y cópialo');
+    }
+  };
+}
+
+/* ---------- WhatsApp y Elia de la barbería ---------- */
+async function renderWhatsAppSettings() {
+  let wa;
+  try {
+    wa = await request('/api/admin/whatsapp');
+  } catch (error) {
+    $('settingContent').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    return;
+  }
+  if (wa.principal) {
+    $('settingContent').innerHTML = `<p class="label">El WhatsApp de esta barbería ${wa.connected ? 'está conectado' : 'no está conectado'} con la configuración del servidor. Elia responde con tus servicios, barberos y horarios.</p>`;
+    return;
+  }
+  if (!wa.available) {
+    $('settingContent').innerHTML = '<p class="label">La conexión de WhatsApp todavía no está activada en el servidor. Comunícate con Master Fade.</p>';
+    return;
+  }
+  const fecha = v => v ? new Date(v).toLocaleString('es-EC', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const estado = wa.connected
+    ? `<span class="badge badge-green">Conectado</span> ${esc(wa.verifiedName || '')} ${esc(wa.displayPhone || '')}`
+    : '<span class="badge badge-gold">Sin conectar</span>';
+  $('settingContent').innerHTML = `
+    <p class="label">Elia responde a tus clientes por WhatsApp con tus servicios, barberos y horarios, y agenda sus turnos. Usa el número de WhatsApp Business de <strong>tu</strong> barbería, de tu propia cuenta de Meta. Tus conversaciones solo las ve tu barbería.</p>
+    <div class="card account-block">
+      <h3>Estado</h3>
+      <p class="label" id="waStatus">${estado}</p>
+      ${wa.connected ? `<p class="label">Webhook: ${wa.webhookVerifiedAt ? 'verificado por Meta el ' + esc(fecha(wa.webhookVerifiedAt)) : 'pendiente: completa el paso 3'}${wa.lastMessageAt ? ' · Último mensaje: ' + esc(fecha(wa.lastMessageAt)) : ''}</p>` : ''}
+      ${wa.lastError ? `<p class="label" style="color:var(--red)">${esc(wa.lastError)}</p>` : ''}
+    </div>
+    <div class="card account-block">
+      <h3>1. En Meta for Developers</h3>
+      <p class="label">Crea una aplicación de tipo «Empresa» con el producto WhatsApp, agrega el número de tu barbería y crea un token de acceso permanente (usuario del sistema con permisos whatsapp_business_messaging y whatsapp_business_management).</p>
+    </div>
+    <div class="card account-block">
+      <h3>2. Pega los datos de tu número</h3>
+      <form id="waForm" class="form-grid" autocomplete="off">
+        <div class="field"><label for="waPhoneId">Phone number ID</label>
+          <input class="input" id="waPhoneId" inputmode="numeric" required value="${esc(wa.phoneNumberId || '')}"></div>
+        <div class="field"><label for="waWabaId">WhatsApp Business Account ID</label>
+          <input class="input" id="waWabaId" inputmode="numeric" value="${esc(wa.wabaId || '')}"></div>
+        <div class="field"><label for="waToken">Token de acceso permanente</label>
+          <input class="input" id="waToken" type="password" required placeholder="${wa.connected ? 'Guardado. Escríbelo de nuevo solo para cambiarlo' : ''}"></div>
+        <div class="field"><label for="waSecret">Clave secreta de la app (App Secret)</label>
+          <input class="input" id="waSecret" type="password" required placeholder="${wa.connected ? 'Guardada. Escríbela de nuevo solo para cambiarla' : ''}"></div>
+        <div class="actions" style="grid-column:1/-1">
+          <button class="btn btn-gold" type="submit">${wa.connected ? 'Actualizar conexión' : 'Comprobar y conectar'}</button>
+          ${wa.connected ? '<button class="btn btn-danger" type="button" id="waDisconnect">Desconectar</button>' : ''}
+        </div>
+      </form>
+      <p class="label">El token y la clave se comprueban con Meta y se guardan cifrados. Nadie puede volver a verlos, ni siquiera desde este panel.</p>
+    </div>
+    <div class="card account-block">
+      <h3>3. Webhook en tu aplicación de Meta</h3>
+      <p class="label">En WhatsApp → Configuración → Webhook, pega estos dos datos y suscríbete al campo «messages».</p>
+      <div class="form-grid">
+        <div class="field" style="grid-column:1/-1"><label for="waWebhookUrl">URL de devolución de llamada</label>
+          <input class="input" id="waWebhookUrl" readonly value="${esc(wa.webhookUrl || '')}"></div>
+        <div class="field" style="grid-column:1/-1"><label for="waVerifyToken">Token de verificación</label>
+          <input class="input" id="waVerifyToken" readonly value="${esc(wa.verifyToken || '')}"></div>
+      </div>
+    </div>`;
+  $('waForm').onsubmit = async event => {
+    event.preventDefault();
+    const boton = event.target.querySelector('button[type=submit]');
+    boton.disabled = true;
+    try {
+      await request('/api/admin/whatsapp', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phoneNumberId: $('waPhoneId').value.trim(),
+          wabaId: $('waWabaId').value.trim(),
+          accessToken: $('waToken').value.trim(),
+          appSecret: $('waSecret').value.trim()
+        })
+      });
+      toast('WhatsApp conectado');
+      renderWhatsAppSettings();
+    } catch (error) {
+      toast(error.message);
+      boton.disabled = false;
+    }
+  };
+  if ($('waDisconnect')) {
+    $('waDisconnect').onclick = async () => {
+      if (!confirm('¿Desconectar el WhatsApp de tu barbería? Elia dejará de responder hasta que lo conectes de nuevo.')) return;
+      try {
+        await request('/api/admin/whatsapp', { method: 'DELETE' });
+        toast('WhatsApp desconectado');
+        renderWhatsAppSettings();
+      } catch (error) {
+        toast(error.message);
+      }
+    };
+  }
 }
 
 /* ---------- Mi cuenta ---------- */

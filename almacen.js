@@ -380,6 +380,32 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-fase7-001',
+  descripcion: 'WhatsApp propio de cada barbería (credenciales cifradas)',
+  sql: `
+    /* Solo crea una tabla nueva: no modifica ni borra datos existentes. */
+    CREATE TABLE IF NOT EXISTS business_whatsapp (
+      business_id TEXT PRIMARY KEY REFERENCES businesses(id) ON DELETE CASCADE,
+      webhook_key TEXT NOT NULL UNIQUE,
+      verify_token_cifrado TEXT NOT NULL,
+      phone_number_id TEXT UNIQUE,
+      waba_id TEXT,
+      display_phone TEXT,
+      verified_name TEXT,
+      access_token_cifrado TEXT,
+      app_secret_cifrado TEXT,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      connected_at TIMESTAMPTZ,
+      webhook_verified_at TIMESTAMPTZ,
+      last_message_at TIMESTAMPTZ,
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
@@ -1056,7 +1082,10 @@ function crearAlmacen(opciones) {
       business: { ...(base.business || {}), id, name: nombre, phone: texto(datos.phone, 30) || '', address: '', description: '' },
       schedule: base.schedule,
       settings: base.settings,
-      barbers: [],
+      /* Registro: un primer barbero con el nombre del propietario para poder reservar desde el primer día. */
+      barbers: datos.primerBarbero
+        ? [{ id: 'barbero-1', name: texto(String(datos.primerBarbero), 80) || 'Barbero', specialty: 'Barbero', active: true }]
+        : [],
       services: base.services || [],
       bookings: []
     };
