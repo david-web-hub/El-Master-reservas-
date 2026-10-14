@@ -188,7 +188,7 @@ class Servidor {
   }
 
   async detener() {
-    if (!this.proc || this.proc.exitCode !== null) return;
+    if (!this.proc || this.proc.exitCode !== null || this.proc.signalCode !== null) return;
     const salida = new Promise(r => this.proc.once('exit', r));
     this.proc.kill('SIGTERM');
     await salida;
