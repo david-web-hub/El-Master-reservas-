@@ -11218,7 +11218,7 @@ app.post(
     }
 
     if (valor?.messages?.length) {
-      whatsappNegocios.anotar(conexion.negocio, { mensaje: true });
+      await whatsappNegocios.anotar(conexion.negocio, { mensaje: true });
     }
 
     const actual = contextoNegocio.getStore() || {};
