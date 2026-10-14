@@ -1355,6 +1355,10 @@ textarea {
 .account-block h3{margin:0 0 4px}
 .secret-box{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;word-break:break-all;background:#0c1014;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}
 .user-avatar{font-weight:850;color:var(--gold2)}
+.subscription-notice{margin:-6px 0 22px;border-left:4px solid var(--gold2)}
+.subscription-notice.danger{border-left-color:var(--red)}
+.subscription-notice h3{margin:0 0 4px}
+.subscription-notice p{margin:0;color:var(--muted)}
 </style>
 </head>
 
@@ -1420,6 +1424,9 @@ textarea {
       </div>
 
     </header>
+
+    <!-- Aviso de suscripción (prueba por terminar, pago pendiente o vencida). -->
+    <div class="card subscription-notice" id="subscriptionNotice" role="status" hidden></div>
 
     <!-- ===================================================
          INICIO
@@ -8027,7 +8034,34 @@ async function loadSession() {
     currentSession = null;
   }
   renderSessionUi();
+  renderSubscriptionNotice();
   avisarInvitaciones();
+}
+
+/* Suscripción administrada desde el Panel Maestro: los datos nunca se borran. */
+function renderSubscriptionNotice() {
+  const box = $('subscriptionNotice');
+  const sub = currentSession?.subscription;
+  const dias = n => n === 1 ? '1 día' : `${n} días`;
+  let aviso = null;
+  if (sub && !sub.protected) {
+    if (sub.status === 'expired') {
+      aviso = { danger: true, titulo: 'Tu suscripción venció',
+        texto: 'Tus datos y tus reservas se conservan, pero la barbería no recibe reservas nuevas. Renueva tu plan con Master Fade para volver a recibirlas.' };
+    } else if (sub.status === 'suspended') {
+      aviso = { danger: true, titulo: 'Tu barbería está suspendida',
+        texto: 'Tus datos se conservan. Comunícate con Master Fade para reactivarla.' };
+    } else if (sub.status === 'past_due') {
+      aviso = { titulo: 'Pago pendiente',
+        texto: `Tu plan ${sub.plan || ''} tiene un pago pendiente. Regulariza el pago con Master Fade para seguir recibiendo reservas.` };
+    } else if (sub.status === 'trial' && sub.daysLeft !== null && sub.daysLeft <= 3) {
+      aviso = { titulo: sub.daysLeft ? `Tu prueba gratuita termina en ${dias(sub.daysLeft)}` : 'Tu prueba gratuita termina hoy',
+        texto: 'Activa tu plan con Master Fade para seguir recibiendo reservas sin interrupciones.' };
+    }
+  }
+  box.hidden = !aviso;
+  box.classList.toggle('danger', Boolean(aviso?.danger));
+  box.innerHTML = aviso ? `<h3>${esc(aviso.titulo)}</h3><p>${esc(aviso.texto)}</p>` : '';
 }
 
 /* Si otra barbería invitó a esta persona, se avisa una vez. */

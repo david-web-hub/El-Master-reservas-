@@ -36,6 +36,16 @@ const {
   validarNegocio
 } = require('./almacen');
 
+const {
+  crearPlataforma,
+  ErrorPlataforma
+} = require('./plataforma');
+
+const {
+  crearVerificador,
+  clavesConfiguradas
+} = require('./firma-plataforma');
+
 const DEFAULT_BUSINESS_ID =
   validarNegocio(
     process.env.DEFAULT_BUSINESS_ID ||
@@ -135,7 +145,11 @@ app.set(
 
 app.use(
   express.json({
-    limit: '5mb'
+    limit: '5mb',
+    /* Las peticiones del Panel Maestro se verifican con su cuerpo exacto (firma). */
+    verify: (req, res, buf) => {
+      if (req.url.startsWith('/api/plataforma/')) req.cuerpoCrudo = buf.toString('utf8');
+    }
   })
 );
 
@@ -219,6 +233,8 @@ function esRutaPublica(req) {
   if (p === '/api/availability' && m === 'GET') return true;
   if (p === '/api/bookings' && m === 'POST') return true;
   if (p === '/api/health' && m === 'GET') return true;
+  /* Panel Maestro: no usa sesión; cada petición va firmada (ver más abajo). */
+  if (p.startsWith('/api/plataforma/')) return true;
 
   return false;
 
@@ -935,9 +951,25 @@ const autenticacion =
         verificarCorreo:
           process.env.VERIFICAR_CORREO !== '0',
         claveDosPasos:
-          claveDosPasos()
+          claveDosPasos(),
+        catalogoPlanes:
+          () => plataforma.catalogo(),
+        diasPruebaPorDefecto:
+          Number(process.env.DIAS_PRUEBA_POR_DEFECTO) || 7
       })
     : null;
+
+/* Integración con el Panel Maestro (fase 6). */
+const plataforma =
+  MODO_ALMACEN === 'postgres'
+    ? crearPlataforma({ pool })
+    : null;
+
+/* El Máster (barbería principal) y las indicadas en NEGOCIOS_PROTEGIDOS nunca se bloquean. */
+const NEGOCIOS_PROTEGIDOS = [
+  DEFAULT_BUSINESS_ID,
+  ...String(process.env.NEGOCIOS_PROTEGIDOS || '').split(',').map(x => x.trim()).filter(Boolean)
+];
 
 
 /* =========================================================
@@ -8588,6 +8620,18 @@ app.get('/api/availability', (req, res) => {
 
 app.post('/api/bookings', async (req, res) => {
   try {
+    /* Suscripción vencida o suspendida: se conservan los datos y las reservas, pero no se aceptan nuevas. */
+    if (plataforma) {
+      const sus = await plataforma.suscripcion(negocioActual());
+      if (sus && !sus.canBook) {
+        return res.status(403).json({
+          ok: false,
+          code: 'SUSCRIPCION_VENCIDA',
+          error: 'Esta barbería no está recibiendo reservas en línea en este momento.'
+        });
+      }
+    }
+
     const { name, phone, barberId, date, time } = req.body || {};
     const ids = parseServiceIds(req.body?.serviceIds ?? req.body?.serviceId);
 
@@ -11074,7 +11118,7 @@ app.post('/api/auth/logout', async (req, res) => {
 
 });
 
-app.get('/api/auth/sesion', (req, res) => {
+app.get('/api/auth/sesion', async (req, res) => {
 
   res.set('Cache-Control', 'no-store');
 
@@ -11082,7 +11126,18 @@ app.get('/api/auth/sesion', (req, res) => {
     return res.status(401).json({ ok: false, error: 'No has iniciado sesión' });
   }
 
-  res.json(descripcionSesion(req.sesion));
+  const descripcion = descripcionSesion(req.sesion);
+
+  /* Estado de la suscripción para el aviso de renovación del panel. */
+  if (plataforma && !req.sesion.local) {
+    try {
+      descripcion.subscription = await plataforma.suscripcion(req.sesion.negocio.id);
+    } catch (error) {
+      console.error('ERROR LEYENDO SUSCRIPCIÓN:', error.message);
+    }
+  }
+
+  res.json(descripcion);
 
 });
 
@@ -11519,6 +11574,145 @@ app.patch('/api/admin/usuarios/:id', async (req, res) => {
 
 
 /* =========================================================
+   PANEL MAESTRO (fase 6)
+   Comunicación entre servidores. Sin sesión ni cookies: cada
+   petición lleva una firma HMAC con la clave PLATAFORMA_CLAVE
+   (ver firma-plataforma.js), fecha (±5 min) y un nonce de un
+   solo uso. Sin clave configurada, estas rutas no funcionan.
+   El Panel solo recibe datos administrativos y cifras.
+========================================================= */
+
+const verificarFirma =
+  crearVerificador({ claves: () => clavesConfiguradas() });
+
+const fallosPlataforma = new Map();
+
+app.use('/api/plataforma', (req, res, next) => {
+
+  res.set('Cache-Control', 'no-store');
+
+  if (!plataforma) {
+    return res.status(503).json({ ok: false, code: 'SIN_POSTGRES', error: 'Requiere PostgreSQL' });
+  }
+
+  const ip = req.ip || 'desconocida';
+  const ahora = Date.now();
+  const fallos = fallosPlataforma.get(ip);
+
+  if (fallos && ahora - fallos.desde > 15 * 60 * 1000) fallosPlataforma.delete(ip);
+  else if (fallos && fallos.n >= 20) {
+    return res.status(429).json({ ok: false, code: 'DEMASIADOS_INTENTOS', error: 'Demasiadas firmas no válidas. Espera 15 minutos.' });
+  }
+
+  const r = verificarFirma({
+    metodo: req.method,
+    ruta: req.originalUrl,
+    cuerpo: req.cuerpoCrudo || '',
+    cabeceras: req.headers
+  });
+
+  if (!r.ok) {
+
+    if (r.motivo === 'NO_CONFIGURADA') {
+      return res.status(503).json({ ok: false, code: 'PLATAFORMA_NO_CONFIGURADA', error: 'La conexión con el Panel Maestro no está configurada' });
+    }
+
+    const f = fallosPlataforma.get(ip) || { n: 0, desde: ahora };
+    f.n++;
+    fallosPlataforma.set(ip, f);
+    if (fallosPlataforma.size > 10000) fallosPlataforma.clear();
+
+    console.warn(`PLATAFORMA: petición rechazada (${r.motivo}) desde ${ip}`);
+    return res.status(401).json({ ok: false, code: 'FIRMA_INVALIDA', error: 'Petición no autorizada' });
+
+  }
+
+  next();
+
+});
+
+function responderErrorPlataforma(res, error, contexto) {
+
+  if (error instanceof ErrorPlataforma) {
+    return res.status(error.status).json({ ok: false, code: error.code, error: error.message });
+  }
+
+  console.error(`ERROR PLATAFORMA (${contexto}):`, error.message);
+  return res.status(500).json({ ok: false, error: 'No se pudo completar la operación' });
+
+}
+
+app.get('/api/plataforma/estado', async (req, res) => {
+  try {
+    const lista = await plataforma.listarNegocios();
+    res.json({ ok: true, version: 1, businesses: lista.length });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'ESTADO');
+  }
+});
+
+app.get('/api/plataforma/negocios', async (req, res) => {
+  try {
+    res.json({ ok: true, businesses: await plataforma.listarNegocios() });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'NEGOCIOS');
+  }
+});
+
+app.get('/api/plataforma/negocios/:id', async (req, res) => {
+  try {
+    res.json({ ok: true, business: await plataforma.negocio(req.params.id) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'NEGOCIO');
+  }
+});
+
+app.put('/api/plataforma/negocios/:id/suscripcion', async (req, res) => {
+  try {
+    const sus = await plataforma.aplicarSuscripcion(req.params.id, req.body || {});
+    console.log(`PLATAFORMA: suscripción de ${req.params.id} → ${sus.storedStatus} (versión ${sus.version})`);
+    res.json({ ok: true, subscription: sus });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'SUSCRIPCIÓN');
+  }
+});
+
+app.put('/api/plataforma/planes', async (req, res) => {
+  try {
+    res.json({ ok: true, plans: await plataforma.sincronizarPlanes(req.body?.plans) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'PLANES');
+  }
+});
+
+app.get('/api/plataforma/eventos', async (req, res) => {
+  try {
+    res.json({ ok: true, events: await plataforma.eventosPendientes(req.query.limite) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'EVENTOS');
+  }
+});
+
+app.post('/api/plataforma/eventos/confirmar', async (req, res) => {
+  try {
+    res.json({ ok: true, confirmed: await plataforma.confirmarEventos(req.body?.ids) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'CONFIRMAR EVENTOS');
+  }
+});
+
+/* Planes disponibles para la pantalla de registro (solo nombre, precio y días de prueba). */
+app.get('/api/public/planes', async (req, res) => {
+  try {
+    const planes = plataforma ? (await plataforma.catalogo()).filter(p => p.active) : [];
+    res.json({ ok: true, plans: planes.map(p => ({ name: p.name, price: p.price, trialDays: p.trialDays })) });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'PLANES PÚBLICOS');
+  }
+});
+
+
+/* =========================================================
    MANEJO DE RUTAS API NO ENCONTRADAS
 ========================================================= */
 
@@ -11765,6 +11959,8 @@ async function prepararAlmacen() {
 
       const estado =
         await almacen.iniciar();
+
+      await plataforma.protegerNegocios(NEGOCIOS_PROTEGIDOS);
 
       console.log(
         `AGENDA EN POSTGRESQL LISTA (barbería: ${DEFAULT_BUSINESS_ID}, ` +

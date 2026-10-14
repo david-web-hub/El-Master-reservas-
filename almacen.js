@@ -353,6 +353,33 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-fase6-001',
+  descripcion: 'Suscripciones administradas por el Panel Maestro y barberías protegidas',
+  sql: `
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS protected BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS current_period_end TIMESTAMPTZ;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS subscription_version INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS subscription_updated_at TIMESTAMPTZ;
+    /* Una barbería protegida (El Máster) nunca puede quedar vencida, suspendida ni con pago pendiente. */
+    ALTER TABLE businesses ADD CONSTRAINT businesses_protegida_activa
+      CHECK (NOT protected OR status IN ('active', 'trial'));
+    /* Estados admitidos. NOT VALID: no revisa filas antiguas, solo las nuevas o modificadas. */
+    ALTER TABLE businesses ADD CONSTRAINT businesses_estado_valido
+      CHECK (status IN ('active', 'trial', 'past_due', 'expired', 'suspended')) NOT VALID;
+
+    /* Copia del catálogo de planes del Panel Maestro (precio y días de prueba). */
+    CREATE TABLE IF NOT EXISTS platform_plans (
+      name TEXT PRIMARY KEY,
+      price NUMERIC(10,2) NOT NULL CHECK (price >= 0),
+      trial_days INTEGER NOT NULL CHECK (trial_days BETWEEN 0 AND 365),
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      position INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 

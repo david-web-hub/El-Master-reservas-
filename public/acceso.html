@@ -159,6 +159,7 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
   <section class="card oculto" id="vista-registro">
     <h1>Crea tu cuenta</h1>
     <p class="sub">Registra tu barbería. Tus datos quedan separados de cualquier otra barbería.</p>
+    <p class="sub oculto" id="reg-plan"></p>
     <form id="form-registro">
       <label for="reg-negocio">Nombre de la barbería</label>
       <input class="input" id="reg-negocio" required maxlength="120">
@@ -310,6 +311,7 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
         email: $('reg-email').value,
         password: $('reg-clave').value,
         phone: $('reg-telefono').value,
+        plan: planElegido || undefined,
         country, currency, timezone
       });
       if (r.status === 201 && r.json.verificationRequired) {
@@ -507,6 +509,7 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
       ir('restablecer');
     } else if (location.hash === '#registro') {
       ir('registro');
+      if (inicial) prepararRegistroDesdePanel();
     } else if (inicial && /[?&]sesion=vencida/.test(location.search)) {
       history.replaceState(null, '', location.pathname);
       aviso('login', 'Tu sesión terminó. Inicia sesión de nuevo para continuar.');
@@ -515,6 +518,35 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
         .then(r => { if (r.ok) location.replace('/admin.html'); })
         .catch(() => {});
     }
+  }
+
+  /*
+    Enlace desde el Panel Maestro: acceso.html?plan=Pro&negocio=…&nombre=…&correo=…#registro
+    Rellena el formulario (nunca la contraseña) y muestra el plan con sus días de prueba.
+  */
+  let planElegido = '';
+  function prepararRegistroDesdePanel() {
+    const q = new URLSearchParams(location.search);
+    const campos = { negocio: 'reg-negocio', nombre: 'reg-nombre', correo: 'reg-email', telefono: 'reg-telefono' };
+    for (const [param, id] of Object.entries(campos)) {
+      const v = q.get(param);
+      if (v && !$(id).value) $(id).value = v.slice(0, 120);
+    }
+    const pais = q.get('pais');
+    if (pais) {
+      const op = [...$('reg-pais').options].find(o => o.text === pais || o.value.startsWith(pais.toUpperCase() + '|'));
+      if (op) $('reg-pais').value = op.value;
+    }
+    const plan = q.get('plan');
+    if (!plan) return;
+    fetch('/api/public/planes').then(r => r.json()).then(d => {
+      const p = (d.plans || []).find(x => x.name.toLowerCase() === plan.toLowerCase());
+      if (!p) return;
+      planElegido = p.name;
+      $('reg-plan').textContent = `Plan ${p.name} · $${Number(p.price).toFixed(2)} al mes` +
+        (p.trialDays > 0 ? ` · ${p.trialDays} días de prueba gratis` : '');
+      $('reg-plan').classList.remove('oculto');
+    }).catch(() => {});
   }
 
   window.addEventListener('hashchange', () => procesarEnlace(false));

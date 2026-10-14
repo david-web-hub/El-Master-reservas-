@@ -221,6 +221,10 @@ function crearAutenticacion({
   /* Clave de 32 bytes para cifrar los secretos de dos pasos; sin ella, la función no está disponible. */
   claveDosPasos = null,
   nombreServicio = 'Master Reservas',
+  /* Catálogo de planes del Panel Maestro (nombre, días de prueba); vacío si aún no se sincronizó. */
+  catalogoPlanes = async () => [],
+  /* Días de prueba si el catálogo todavía no llegó (el del Panel Maestro: 7). */
+  diasPruebaPorDefecto = 7,
   registro = console
 }) {
   const limitador = crearLimitador({ maximo: limiteIp, ventanaMs: 15 * 60 * 1000 });
@@ -241,7 +245,7 @@ function crearAutenticacion({
     const r = await pool.query(
       `SELECT m.business_id AS id, b.name, b.slug, m.role
        FROM memberships m JOIN businesses b ON b.id = m.business_id
-       WHERE m.user_id = $1 AND m.status = 'active' AND b.status <> 'suspended'
+       WHERE m.user_id = $1 AND m.status = 'active' AND (b.status <> 'suspended' OR b.protected)
        ORDER BY m.created_at`, [userId]);
     return r.rows;
   }
@@ -268,6 +272,17 @@ function crearAutenticacion({
       .normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
     if (slug.length < 3) throw new ErrorAuth(400, 'SLUG_INVALIDO', 'Elige una dirección de al menos 3 letras o números');
+    /* Plan y días de prueba según el catálogo del Panel Maestro. */
+    const planes = (await catalogoPlanes()).filter(p => p.active);
+    const pedido = String(datos.plan || '').trim().toLowerCase();
+    let plan = null;
+    let diasPrueba = diasPruebaPorDefecto;
+    if (planes.length) {
+      plan = pedido ? planes.find(p => p.name.toLowerCase() === pedido) : planes[0];
+      if (!plan) throw new ErrorAuth(400, 'PLAN_INVALIDO', 'El plan elegido no está disponible. Elige otro.');
+      diasPrueba = plan.trialDays;
+    }
+    const nombrePlan = plan ? plan.name : (String(datos.plan || '').trim().slice(0, 60) || null);
 
     const hash = await cifrarClave(clave);
     const client = await pool.connect();
@@ -283,8 +298,8 @@ function crearAutenticacion({
         negocio = await almacen.crearNegocio({
           id: slug, slug, name: nombreNegocio,
           country: datos.country, currency: datos.currency, locale: datos.locale, timezone: datos.timezone,
-          plan: datos.plan, contactEmail: correo, contactPhone: datos.phone,
-          trialEndsAt: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString()
+          plan: nombrePlan, contactEmail: correo, contactPhone: datos.phone,
+          trialEndsAt: new Date(Date.now() + diasPrueba * 24 * 3600 * 1000).toISOString()
         }, { client });
       } catch (error) {
         if (error.code === 'NEGOCIO_EXISTE') throw new ErrorAuth(409, 'SLUG_EXISTE', 'Esa dirección ya está en uso; elige otra.');
@@ -396,7 +411,7 @@ function crearAutenticacion({
     if (!token || typeof token !== 'string' || token.length > 100) return null;
     const r = await pool.query(
       `SELECT s.token_hash, s.user_id, s.business_id, s.last_seen_at, u.email, u.name, u.totp_enabled_at,
-              m.role, m.barber_id, b.name AS business_name, b.status AS business_status
+              m.role, m.barber_id, b.name AS business_name, b.status AS business_status, b.protected AS business_protected
        FROM sessions s
        JOIN users u ON u.id = s.user_id AND u.status = 'active'
        JOIN memberships m ON m.user_id = s.user_id AND m.business_id = s.business_id AND m.status = 'active'
@@ -404,7 +419,7 @@ function crearAutenticacion({
        WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > NOW()`,
       [resumen(token)]);
     const s = r.rows[0];
-    if (!s || s.business_status === 'suspended') return null;
+    if (!s || (s.business_status === 'suspended' && !s.business_protected)) return null;
     if (Date.now() - new Date(s.last_seen_at).getTime() > 5 * 60 * 1000) {
       pool.query('UPDATE sessions SET last_seen_at = NOW() WHERE token_hash = $1', [s.token_hash]).catch(() => {});
     }
@@ -842,7 +857,7 @@ function crearAutenticacion({
   /* Invitación válida por su código; explica si venció, se usó o se revocó. */
   async function invitacionPorToken(cliente, token) {
     const inv = (await cliente.query(
-      `SELECT i.*, i.expires_at <= NOW() AS vencida, b.name AS negocio, b.status AS estado_negocio
+      `SELECT i.*, i.expires_at <= NOW() AS vencida, b.name AS negocio, b.status AS estado_negocio, b.protected AS protegido
        FROM invitations i JOIN businesses b ON b.id = i.business_id
        WHERE i.token_hash = $1 FOR UPDATE OF i`, [resumen(String(token || ''))])).rows[0];
     if (!inv) throw new ErrorAuth(404, 'INVITACION_INVALIDA', 'La invitación no es válida. Revisa que el enlace esté completo.');
@@ -853,7 +868,7 @@ function crearAutenticacion({
     };
     if (inv.status !== 'pending') throw new ErrorAuth(410, 'INVITACION_CERRADA', cerradas[inv.status] || 'La invitación ya no está disponible.');
     if (inv.vencida) throw new ErrorAuth(410, 'INVITACION_VENCIDA', 'La invitación venció. Pide a la barbería que te envíe una nueva.');
-    if (inv.estado_negocio === 'suspended') throw new ErrorAuth(410, 'INVITACION_CERRADA', 'La barbería no está disponible.');
+    if (inv.estado_negocio === 'suspended' && !inv.protegido) throw new ErrorAuth(410, 'INVITACION_CERRADA', 'La barbería no está disponible.');
     return inv;
   }
 
@@ -958,7 +973,7 @@ function crearAutenticacion({
     const r = await pool.query(
       `SELECT i.*, b.name AS negocio, u.name AS invitante
        FROM invitations i JOIN businesses b ON b.id = i.business_id LEFT JOIN users u ON u.id = i.invited_by
-       WHERE lower(i.email) = lower($1) AND i.status = 'pending' AND i.expires_at > NOW() AND b.status <> 'suspended'
+       WHERE lower(i.email) = lower($1) AND i.status = 'pending' AND i.expires_at > NOW() AND (b.status <> 'suspended' OR b.protected)
        ORDER BY i.created_at`, [sesion.usuario.email]);
     return r.rows.map(x => ({
       id: x.id, businessId: x.business_id, businessName: x.negocio, invitedBy: x.invitante,
