@@ -137,8 +137,10 @@ test.describe('Fase 3 · seguridad', { skip: omitir }, () => {
     const { datos } = await registrar(s);
     const repetido = await s.pedir('POST', '/api/auth/registro', { ...datos, businessName: 'Otra ' + unico() }, { cookie: null });
     assert.equal(repetido.status, 409);
-    const slug = await s.pedir('POST', '/api/auth/registro', { ...datos, email: `otra-${unico()}@prueba.test` }, { cookie: null });
-    assert.equal(slug.status, 409, 'la misma dirección pública no se repite');
+    /* Mismo nombre de barbería: recibe otra dirección pública en lugar de un error. */
+    const mismoNombre = await s.pedir('POST', '/api/auth/registro', { ...datos, email: `otra-${unico()}@prueba.test` }, { cookie: null });
+    assert.equal(mismoNombre.status, 201);
+    assert.match(mismoNombre.json.business.slug, /-2$/, 'la misma dirección pública no se repite');
     for (const malo of [{ password: 'corta' }, { password: '1234567890' }, { email: 'no-es-correo' }, { businessName: '' }, { name: '' }]) {
       const r = await s.pedir('POST', '/api/auth/registro', { ...datos, email: `x-${unico()}@prueba.test`, businessName: 'B ' + unico(), ...malo }, { cookie: null });
       assert.equal(r.status, 400, JSON.stringify(malo));

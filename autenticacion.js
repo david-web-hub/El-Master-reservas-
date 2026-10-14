@@ -268,10 +268,18 @@ function crearAutenticacion({
     const clave = validarClave(datos.password, { correo, nombre });
     const nombreNegocio = String(datos.businessName || '').trim().slice(0, 120);
     if (nombreNegocio.length < 2) throw new ErrorAuth(400, 'NEGOCIO_REQUERIDO', 'Escribe el nombre de tu barbería');
-    const slug = String(datos.slug || nombreNegocio).toLowerCase()
+    const slugPedido = Boolean(datos.slug);
+    const slugBase = String(datos.slug || nombreNegocio).toLowerCase()
       .normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
-    if (slug.length < 3) throw new ErrorAuth(400, 'SLUG_INVALIDO', 'Elige una dirección de al menos 3 letras o números');
+    if (slugBase.length < 3) throw new ErrorAuth(400, 'SLUG_INVALIDO', 'Elige una dirección de al menos 3 letras o números');
+    /* Dos barberías con el mismo nombre: la segunda recibe otra dirección (fade-zone-2, fade-zone-3…). */
+    let slug = slugBase;
+    if (!slugPedido) {
+      const usadas = new Set((await pool.query(
+        `SELECT slug FROM businesses WHERE slug = $1 OR slug LIKE $2`, [slugBase, slugBase + '-%'])).rows.map(r => r.slug));
+      for (let n = 2; usadas.has(slug); n++) slug = `${slugBase}-${n}`;
+    }
     /* Plan y días de prueba según el catálogo del Panel Maestro. */
     const planes = (await catalogoPlanes()).filter(p => p.active);
     const pedido = String(datos.plan || '').trim().toLowerCase();
@@ -296,7 +304,7 @@ function crearAutenticacion({
       let negocio;
       try {
         negocio = await almacen.crearNegocio({
-          id: slug, slug, name: nombreNegocio,
+          id: slug, slug, name: nombreNegocio, primerBarbero: nombre,
           country: datos.country, currency: datos.currency, locale: datos.locale, timezone: datos.timezone,
           plan: nombrePlan, contactEmail: correo, contactPhone: datos.phone,
           trialEndsAt: new Date(Date.now() + diasPrueba * 24 * 3600 * 1000).toISOString()
@@ -411,7 +419,7 @@ function crearAutenticacion({
     if (!token || typeof token !== 'string' || token.length > 100) return null;
     const r = await pool.query(
       `SELECT s.token_hash, s.user_id, s.business_id, s.last_seen_at, u.email, u.name, u.totp_enabled_at,
-              m.role, m.barber_id, b.name AS business_name, b.status AS business_status, b.protected AS business_protected
+              m.role, m.barber_id, b.name AS business_name, b.slug AS business_slug, b.status AS business_status, b.protected AS business_protected
        FROM sessions s
        JOIN users u ON u.id = s.user_id AND u.status = 'active'
        JOIN memberships m ON m.user_id = s.user_id AND m.business_id = s.business_id AND m.status = 'active'
@@ -425,7 +433,7 @@ function crearAutenticacion({
     }
     return {
       usuario: { id: s.user_id, email: s.email, name: s.name },
-      negocio: { id: s.business_id, name: s.business_name },
+      negocio: { id: s.business_id, name: s.business_name, slug: s.business_slug },
       rol: s.role,
       barberId: s.barber_id || null,
       dosPasos: Boolean(s.totp_enabled_at)

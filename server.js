@@ -51,6 +51,15 @@ const {
   propietarioInicial
 } = require('./despliegue-inicial');
 
+const {
+  crearDirectorio
+} = require('./negocios-publicos');
+
+const {
+  crearWhatsAppNegocios,
+  ErrorWhatsApp
+} = require('./whatsapp-negocios');
+
 const DEFAULT_BUSINESS_ID =
   validarNegocio(
     process.env.DEFAULT_BUSINESS_ID ||
@@ -148,12 +157,114 @@ app.set(
     : (process.env.RENDER ? 1 : false)
 );
 
+/* =========================================================
+   PÁGINA PÚBLICA DE CADA BARBERÍA: /b/<dirección>/
+   La página y sus llamadas públicas (información, imágenes,
+   disponibilidad y reservas) llevan delante /b/<dirección>.
+   Aquí se quita ese prefijo y se recuerda la barbería; el
+   resto del servidor funciona igual que para la principal.
+   Solo se permiten esas rutas públicas: nada de
+   administración, sesiones ni WhatsApp bajo /b/.
+========================================================= */
+
+const directorio =
+  crearDirectorio({
+    pool: process.env.DATABASE_URL ? pool : null
+  });
+
+/*
+  WhatsApp propio de cada barbería (credenciales cifradas con WHATSAPP_CLAVE_CIFRADO).
+  En producción, sin esa clave la conexión queda desactivada (no se inventa una).
+*/
+const whatsappNegocios =
+  crearWhatsAppNegocios({
+    pool: process.env.DATABASE_URL ? pool : null,
+    clave: process.env.WHATSAPP_CLAVE_CIFRADO || (esProduccion() ? '' : 'solo-desarrollo-whatsapp-master-reservas'),
+    graphUrl: process.env.WHATSAPP_GRAPH_URL || 'https://graph.facebook.com',
+    version: process.env.WHATSAPP_GRAPH_VERSION || 'v23.0',
+    numeroReservado: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+    produccion: esProduccion()
+  });
+
+const RUTA_BARBERIA =
+  /^\/b\/([a-z0-9][a-z0-9-]{1,62})(\/.*)?$/;
+
+function rutaPublicaDeBarberia(metodo, resto) {
+
+  const lectura = metodo === 'GET' || metodo === 'HEAD';
+
+  if (lectura && (resto === '/' || resto === '/index.html')) return '/index.html';
+  if (lectura && /^\/api\/public\/(site|media\/[A-Za-z0-9_-]{1,80})$/.test(resto)) return resto;
+  if (lectura && resto === '/api/availability') return resto;
+  if (metodo === 'POST' && resto === '/api/bookings') return resto;
+
+  return null;
+
+}
+
+app.use(
+  async (req, res, next) => {
+
+    const m =
+      RUTA_BARBERIA.exec(req.path);
+
+    if (!m) return next();
+
+    const i = req.url.indexOf('?');
+    const consulta = i >= 0 ? req.url.slice(i) : '';
+    const resto = m[2] || '';
+
+    if (resto === '') {
+      return res.redirect(301, `/b/${m[1]}/${consulta}`);
+    }
+
+    const destino =
+      rutaPublicaDeBarberia(req.method, resto);
+
+    const noEncontrada = () => (
+      resto.startsWith('/api/')
+        ? res.status(404).json({ ok: false, code: 'BARBERIA_NO_ENCONTRADA', error: 'Esta barbería no existe o no está disponible.' })
+        : res.status(404).type('html').send(
+          '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+          '<title>Barbería no encontrada</title></head><body style="margin:0;font-family:system-ui,sans-serif;background:#080808;color:#fff;' +
+          'display:grid;place-items:center;min-height:100vh;text-align:center;padding:24px"><div><h1 style="color:#d4af37">Barbería no encontrada</h1>' +
+          '<p style="color:rgba(255,255,255,.62)">Revisa el enlace o pídeselo de nuevo a la barbería.</p></div></body></html>')
+    );
+
+    if (!destino) return noEncontrada();
+
+    try {
+
+      const barberia =
+        process.env.DATABASE_URL
+          ? await directorio.buscar(m[1])
+          : (m[1] === DEFAULT_BUSINESS_ID ? { id: DEFAULT_BUSINESS_ID, slug: DEFAULT_BUSINESS_ID } : null);
+
+      if (!barberia) return noEncontrada();
+
+      req.negocioPublico = barberia.id;
+      req.prefijoPublico = `/b/${barberia.slug}`;
+      req.url = destino + consulta;
+
+      next();
+
+    } catch (error) {
+
+      next(error);
+
+    }
+
+  }
+);
+
 app.use(
   express.json({
     limit: '5mb',
     /* Las peticiones del Panel Maestro se verifican con su cuerpo exacto (firma). */
     verify: (req, res, buf) => {
       if (req.url.startsWith('/api/plataforma/')) req.cuerpoCrudo = buf.toString('utf8');
+      /* WhatsApp de cada barbería: la firma de Meta se comprueba sobre el cuerpo exacto. */
+      if (req.url.startsWith('/webhooks/whatsapp/n/')) req.cuerpoCrudo = buf.toString('utf8');
     }
   })
 );
@@ -390,6 +501,11 @@ function resolverNegocio(req) {
     return req.sesion.negocio.id;
   }
 
+  /* Página pública de otra barbería (/b/<dirección>/). */
+  if (req.negocioPublico) {
+    return req.negocioPublico;
+  }
+
   return DEFAULT_BUSINESS_ID;
 
 }
@@ -405,6 +521,12 @@ app.use(
       await almacen.cargarNegocio(
         negocio
       );
+
+      /* Zonas horarias y direcciones públicas (en memoria unos segundos). */
+      if (MODO_ALMACEN === 'postgres') {
+        await directorio.actualizar().catch(error =>
+          console.error('ERROR LEYENDO BARBERÍAS:', error.message));
+      }
 
       contextoNegocio.run(
         {
@@ -454,6 +576,8 @@ const REGLAS_PERMISO = [
   ['*', /^\/api\/admin\/usuarios(\/|$)/, ['usuarios']],
   ['GET', /^\/api\/admin\/invitaciones$/, ['usuarios.ver']],
   ['*', /^\/api\/admin\/invitaciones(\/|$)/, ['usuarios']],
+  /* WhatsApp propio: solo quien configura la barbería (incluye el token de verificación del webhook). */
+  ['*', /^\/api\/admin\/whatsapp$/, ['configuracion']],
   ['GET', /^\/api\/admin\/(services|business|barbers|settings|hours|media)$/, ['panel']],
   ['*', /^\/api\/admin\/(services|business|barbers|settings|hours|media)(\/|$)/, ['configuracion']]
 ];
@@ -905,6 +1029,27 @@ function correoListo() {
 }
 
 
+function verificacionObligatoria() {
+
+  return esProduccion() || process.env.VERIFICAR_CORREO !== '0';
+
+}
+
+
+/* Página pública de reservas: la principal en "/", las demás en /b/<dirección>/. */
+function enlacePublico(id, slug) {
+
+  const base = urlPublica();
+
+  if (!base || !slug) return null;
+
+  return id === DEFAULT_BUSINESS_ID
+    ? `${base}/`
+    : `${base}/b/${slug}/`;
+
+}
+
+
 function urlPublica() {
 
   if (process.env.PUBLIC_BASE_URL) {
@@ -953,8 +1098,9 @@ const autenticacion =
         urlBase: urlPublica,
         limiteIp:
           Number(process.env.AUTH_LIMITE_IP) || 30,
+        /* En producción la confirmación del correo es obligatoria (VERIFICAR_CORREO=0 solo vale en pruebas). */
         verificarCorreo:
-          process.env.VERIFICAR_CORREO !== '0',
+          verificacionObligatoria(),
         claveDosPasos:
           claveDosPasos(),
         catalogoPlanes:
@@ -3956,7 +4102,10 @@ app.post(
    MOTOR DE RESERVAS + ELIA
 ========================================================= */
 
-const TZ = 'America/Guayaquil';
+/* Zona horaria de la barbería de la petición (la principal: America/Guayaquil). */
+function zonaActual() {
+  return directorio.zona(negocioActual());
+}
 
 /*
   Compatibilidad con el código original de Elia.
@@ -4079,7 +4228,7 @@ function localDateParts(
     new Intl.DateTimeFormat(
       'en-CA',
       {
-        timeZone: TZ,
+        timeZone: zonaActual(),
         year: 'numeric',
         month: '2-digit',
         day: '2-digit'
@@ -6945,12 +7094,15 @@ const waSessions =
   new Map();
 
 
+/* Cada conversación pertenece a una barbería: la misma persona puede escribir a dos barberías sin mezclarlas. */
+const claveSesionWa = from => `${negocioActual()}:${from}`;
+
 function resetSession(
   from
 ) {
 
   waSessions.delete(
-    from
+    claveSesionWa(from)
   );
 
 }
@@ -6962,7 +7114,7 @@ function getSession(
 
   return (
     waSessions.get(
-      from
+      claveSesionWa(from)
     ) ||
     {
       step:
@@ -6981,7 +7133,7 @@ function saveSession(
 ) {
 
   waSessions.set(
-    from,
+    claveSesionWa(from),
     session
   );
 
@@ -8159,7 +8311,7 @@ async function saveSettingSection(section, data) {
 
 function nowMinutesLocal() {
   const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    timeZone: zonaActual(), hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
   }).formatToParts(new Date());
   const h = Number(parts.find(p => p.type === 'hour').value) % 24;
   const m = Number(parts.find(p => p.type === 'minute').value);
@@ -8362,6 +8514,56 @@ function applyBarberFields(db, barber, body, isNew) {
   return null;
 }
 
+/* ---------------- WHATSAPP PROPIO DE LA BARBERÍA ---------------- */
+
+function responderErrorWhatsApp(res, error) {
+  if (error instanceof ErrorWhatsApp) {
+    return res.status(error.status).json({ ok: false, code: error.code, error: error.message });
+  }
+  console.error('ERROR WHATSAPP DE LA BARBERÍA:', error.message);
+  return res.status(500).json({ ok: false, error: 'No se pudo completar la acción de WhatsApp' });
+}
+
+app.get('/api/admin/whatsapp', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (negocioActual() === DEFAULT_BUSINESS_ID) {
+    /* El Máster usa el número configurado en el servidor; no se cambia desde aquí. */
+    return res.json({ ok: true, principal: true, connected: Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) });
+  }
+  try {
+    const e = await whatsappNegocios.estado(negocioActual());
+    const base = urlPublica();
+    res.json({ ok: true, ...e, webhookUrl: e.webhookPath && base ? base + e.webhookPath : null });
+  } catch (error) {
+    responderErrorWhatsApp(res, error);
+  }
+});
+
+app.put('/api/admin/whatsapp', async (req, res) => {
+  if (negocioActual() === DEFAULT_BUSINESS_ID) {
+    return res.status(409).json({ ok: false, error: 'El WhatsApp de la barbería principal se configura en el servidor.' });
+  }
+  try {
+    const e = await whatsappNegocios.conectar(negocioActual(), req.body || {});
+    const base = urlPublica();
+    res.json({ ok: true, ...e, webhookUrl: base ? base + e.webhookPath : null });
+  } catch (error) {
+    responderErrorWhatsApp(res, error);
+  }
+});
+
+app.delete('/api/admin/whatsapp', async (req, res) => {
+  if (negocioActual() === DEFAULT_BUSINESS_ID) {
+    return res.status(409).json({ ok: false, error: 'El WhatsApp de la barbería principal se configura en el servidor.' });
+  }
+  try {
+    const e = await whatsappNegocios.desconectar(negocioActual());
+    res.json({ ok: true, ...e });
+  } catch (error) {
+    responderErrorWhatsApp(res, error);
+  }
+});
+
 app.post('/api/admin/barbers', async (req, res) => {
   try {
     const db = readDb();
@@ -8521,8 +8723,9 @@ app.get('/api/public/site', async (req, res) => {
   }
 
   const has = new Map(media.map(m => [m.id, m]));
+  const prefijo = req.prefijoPublico || '';
   const url = id => has.has(id)
-    ? `/api/public/media/${id}?v=${new Date(has.get(id).updated_at).getTime()}`
+    ? `${prefijo}/api/public/media/${id}?v=${new Date(has.get(id).updated_at).getTime()}`
     : null;
 
   const neg = s.negocio || {};
@@ -8791,6 +8994,11 @@ async function sendWhatsApp(
   to,
   body
 ) {
+
+  /* Otras barberías: solo con SU número conectado; nunca con el de El Máster. */
+  if (negocioActual() !== DEFAULT_BUSINESS_ID) {
+    return whatsappNegocios.enviar(negocioActual(), to, body);
+  }
 
   const token =
     process.env
@@ -9561,9 +9769,7 @@ async function procesarEdicion(
    WEBHOOK PRINCIPAL DE WHATSAPP
 ========================================================= */
 
-app.post(
-  '/webhooks/whatsapp',
-  async (req, res) => {
+async function atenderWebhookWhatsApp(req, res) {
 
     console.log(
       'WEBHOOK WHATSAPP RECIBIDO'
@@ -9593,6 +9799,18 @@ app.post(
 
       if (!msg) {
         return;
+      }
+
+
+      /* Suscripción vencida o suspendida: Elia no toma reservas nuevas (El Máster está protegida). */
+      if (plataforma && negocioActual() !== DEFAULT_BUSINESS_ID) {
+        const sus = await plataforma.suscripcion(negocioActual());
+        if (sus && !sus.canBook) {
+          return sendWhatsApp(
+            msg.from,
+            'En este momento esta barbería no está recibiendo reservas en línea. Comunícate directamente con la barbería. 💈'
+          );
+        }
       }
 
 
@@ -10084,7 +10302,9 @@ app.post(
           from,
 
           eliaSettings.welcome || (
-            '👋 ¡Hola! Bienvenido a El Máster 💈\n\n' +
+            '👋 ¡Hola! Bienvenido a ' +
+            (negocioActual() === DEFAULT_BUSINESS_ID ? 'El Máster' : (db.business?.name || 'nuestra barbería')) +
+            ' 💈\n\n' +
             'Con gusto puedo ayudarte.\n' +
             'Dime cuántos turnos deseas reservar.'
           )
@@ -10898,6 +11118,116 @@ app.post(
 
     }
 
+}
+
+/* Número de El Máster (variables del servidor). Un mensaje para otro número no es suyo y se ignora. */
+app.post(
+  '/webhooks/whatsapp',
+  (req, res) => {
+
+    const numero = req.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+
+    if (
+      numero &&
+      process.env.WHATSAPP_PHONE_NUMBER_ID &&
+      String(numero) !== String(process.env.WHATSAPP_PHONE_NUMBER_ID)
+    ) {
+      console.error('WEBHOOK WHATSAPP: mensaje para otro número; se ignora.');
+      return res.sendStatus(200);
+    }
+
+    return atenderWebhookWhatsApp(req, res);
+
+  }
+);
+
+
+/* =========================================================
+   WHATSAPP DE CADA BARBERÍA: /webhooks/whatsapp/n/<clave>
+   - GET: Meta comprueba el token de verificación de ESA barbería.
+   - POST: solo se acepta con la firma de la clave secreta de su
+     aplicación de Meta y para su número. Elia responde con los
+     datos de esa barbería y desde su número.
+========================================================= */
+
+app.get(
+  '/webhooks/whatsapp/n/:clave',
+  async (req, res) => {
+
+    try {
+
+      const conexion = await whatsappNegocios.porClave(req.params.clave);
+
+      if (
+        conexion &&
+        req.query['hub.mode'] === 'subscribe' &&
+        whatsappNegocios.iguales(req.query['hub.verify_token'], conexion.verifyToken())
+      ) {
+        await whatsappNegocios.anotar(conexion.negocio, { verificado: true });
+        console.log(`WEBHOOK WHATSAPP VERIFICADO (${conexion.negocio})`);
+        return res.status(200).type('text/plain').send(String(req.query['hub.challenge'] || ''));
+      }
+
+      return res.sendStatus(403);
+
+    } catch (error) {
+
+      console.error('ERROR VERIFICANDO WEBHOOK DE WHATSAPP:', error.message);
+      return res.sendStatus(500);
+
+    }
+
+  }
+);
+
+app.post(
+  '/webhooks/whatsapp/n/:clave',
+  async (req, res) => {
+
+    let conexion;
+
+    try {
+      conexion = await whatsappNegocios.porClave(req.params.clave);
+    } catch (error) {
+      console.error('ERROR LEYENDO WHATSAPP DE LA BARBERÍA:', error.message);
+      return res.sendStatus(500);
+    }
+
+    if (!conexion) return res.sendStatus(404);
+
+    if (
+      !conexion.enabled ||
+      !whatsappNegocios.firmaValida(conexion.appSecret(), req.cuerpoCrudo, req.headers['x-hub-signature-256'])
+    ) {
+      console.error(`WEBHOOK WHATSAPP (${conexion.negocio}): firma no válida o número desconectado; se rechaza.`);
+      return res.sendStatus(401);
+    }
+
+    const valor = req.body?.entry?.[0]?.changes?.[0]?.value;
+
+    if (String(valor?.metadata?.phone_number_id || '') !== String(conexion.phoneNumberId)) {
+      /* Estados de entrega u otro número: nada que responder. */
+      return res.sendStatus(200);
+    }
+
+    try {
+      await almacen.cargarNegocio(conexion.negocio);
+    } catch (error) {
+      console.error('ERROR CARGANDO BARBERÍA PARA WHATSAPP:', error.message);
+      return res.sendStatus(500);
+    }
+
+    if (valor?.messages?.length) {
+      await whatsappNegocios.anotar(conexion.negocio, { mensaje: true });
+    }
+
+    const actual = contextoNegocio.getStore() || {};
+
+    return contextoNegocio.run(
+      { ...actual, negocio: conexion.negocio, sesion: null },
+      () => atenderWebhookWhatsApp(req, res)
+    );
+
   }
 );
 
@@ -11147,6 +11477,12 @@ app.get('/api/auth/sesion', async (req, res) => {
 
   const descripcion = descripcionSesion(req.sesion);
 
+  /* Enlace de la página pública de reservas de esta barbería, para compartir. */
+  if (!req.sesion.local) {
+    descripcion.publicUrl = enlacePublico(req.sesion.negocio.id, req.sesion.negocio.slug);
+    descripcion.principal = req.sesion.negocio.id === DEFAULT_BUSINESS_ID;
+  }
+
   /* Estado de la suscripción para el aviso de renovación del panel. */
   if (plataforma && !req.sesion.local) {
     try {
@@ -11238,7 +11574,7 @@ app.get('/api/auth/config', (req, res) => {
     ok: true,
     accounts: Boolean(autenticacion),
     registrationOpen: Boolean(autenticacion) && registroAbierto(),
-    emailVerification: process.env.VERIFICAR_CORREO !== '0',
+    emailVerification: verificacionObligatoria(),
     twoFactorAvailable: Boolean(autenticacion && autenticacion.disponibleDosPasos())
   });
 
@@ -11661,10 +11997,32 @@ function responderErrorPlataforma(res, error, contexto) {
 
 }
 
+/* Datos públicos que el Panel Maestro muestra de cada barbería: su enlace y si conectó WhatsApp (sin números ni secretos). */
+async function completarNegocios(lista) {
+  const wa = await whatsappNegocios.resumenes().catch(() => new Map());
+  return lista.map(b => ({
+    ...b,
+    publicUrl: enlacePublico(b.id, b.slug),
+    whatsapp: b.id === DEFAULT_BUSINESS_ID
+      ? { connected: Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID), principal: true }
+      : (wa.get(b.id) || { connected: false })
+  }));
+}
+
 app.get('/api/plataforma/estado', async (req, res) => {
   try {
     const lista = await plataforma.listarNegocios();
-    res.json({ ok: true, version: 1, businesses: lista.length });
+    res.json({
+      ok: true,
+      version: 2,
+      businesses: lista.length,
+      /* Para comprobar desde el Panel Maestro que todo está listo antes de abrir el registro. */
+      correo: { configurado: correo.configurado, listo: correoListo() },
+      registroAbierto: Boolean(autenticacion) && registroAbierto(),
+      verificacionObligatoria: verificacionObligatoria(),
+      publicBaseUrl: Boolean(process.env.PUBLIC_BASE_URL),
+      whatsappNegocios: whatsappNegocios.disponible
+    });
   } catch (error) {
     responderErrorPlataforma(res, error, 'ESTADO');
   }
@@ -11672,7 +12030,7 @@ app.get('/api/plataforma/estado', async (req, res) => {
 
 app.get('/api/plataforma/negocios', async (req, res) => {
   try {
-    res.json({ ok: true, businesses: await plataforma.listarNegocios() });
+    res.json({ ok: true, businesses: await completarNegocios(await plataforma.listarNegocios()) });
   } catch (error) {
     responderErrorPlataforma(res, error, 'NEGOCIOS');
   }
@@ -11680,7 +12038,8 @@ app.get('/api/plataforma/negocios', async (req, res) => {
 
 app.get('/api/plataforma/negocios/:id', async (req, res) => {
   try {
-    res.json({ ok: true, business: await plataforma.negocio(req.params.id) });
+    const [b] = await completarNegocios([await plataforma.negocio(req.params.id)]);
+    res.json({ ok: true, business: b });
   } catch (error) {
     responderErrorPlataforma(res, error, 'NEGOCIO');
   }
@@ -11689,10 +12048,31 @@ app.get('/api/plataforma/negocios/:id', async (req, res) => {
 app.put('/api/plataforma/negocios/:id/suscripcion', async (req, res) => {
   try {
     const sus = await plataforma.aplicarSuscripcion(req.params.id, req.body || {});
+    /* Suspendida o reactivada: su página pública cambia de inmediato. */
+    directorio.invalidar();
     console.log(`PLATAFORMA: suscripción de ${req.params.id} → ${sus.storedStatus} (versión ${sus.version})`);
     res.json({ ok: true, subscription: sus });
   } catch (error) {
     responderErrorPlataforma(res, error, 'SUSCRIPCIÓN');
+  }
+});
+
+/* Correo de prueba enviado desde el Panel Maestro: confirma que Resend funciona de verdad. */
+app.post('/api/plataforma/correo/prueba', async (req, res) => {
+  const para = String(req.body?.para || '').trim().toLowerCase();
+  if (!/^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/.test(para)) {
+    return res.status(400).json({ ok: false, error: 'Escribe un correo válido' });
+  }
+  try {
+    const r = await enviarCorreo({ para, plantilla: 'prueba', datos: { enlace: urlPublica() || 'https://example.com' } });
+    if (r && r.ok) return res.json({ ok: true, modo: r.modo || null });
+    const motivo = r?.error === 'NO_CONFIGURADO'
+      ? 'El correo no está configurado: faltan RESEND_API_KEY o CORREO_REMITENTE en El Máster Reservas.'
+      : `Resend no envió el correo (${r?.error || 'error'}${r?.status ? ' ' + r.status : ''}). Revisa que el dominio del remitente esté verificado en Resend.`;
+    res.status(502).json({ ok: false, error: motivo });
+  } catch (error) {
+    console.error('ERROR CORREO DE PRUEBA:', error.message);
+    res.status(500).json({ ok: false, error: 'No se pudo enviar el correo de prueba' });
   }
 });
 

@@ -26,7 +26,7 @@ const FECHA_FIJA = new Date('2026-10-14T15:00:00Z');
 const PANEL = ['inicio', 'reservas', 'caja', 'productos', 'clientes', 'informes', 'configuracion'];
 const AJUSTES = ['negocio', 'barberos', 'horarios', 'pagos', 'mensajes', 'pagina', 'multimedia', 'apariencia', 'notificaciones', 'datos', 'avanzada'];
 /* Pantallas nuevas: solo se capturan en las versiones que las tienen. */
-const AJUSTES_NUEVOS = ['cuenta', 'usuarios'];
+const AJUSTES_NUEVOS = ['cuenta', 'usuarios', 'enlace', 'whatsapp'];
 const PANTALLAS = [{ nombre: 'escritorio', width: 1366, height: 900 }, { nombre: 'movil', width: 390, height: 844 }];
 
 async function capturar(destino) {
@@ -47,6 +47,15 @@ async function capturar(destino) {
       await page.clock.setFixedTime(FECHA_FIJA);
       const guardar = async (nombre, pagina = page) => {
         await pagina.waitForTimeout(400);
+        /* Datos que cambian en cada ejecución (correo aleatorio de la cuenta de prueba y hora de acceso): se fijan. */
+        await pagina.evaluate(() => {
+          const fijar = t => t
+            .replace(/propietario-[a-z0-9-]+@prueba\.test/g, 'propietario@prueba.test')
+            .replace(/\d{1,2}\/\d{1,2}\/\d{4},? \d{1,2}:\d{2}(:\d{2})?( [ap]\. ?m\.)?/g, '14/10/2026, 10:00:00 a. m.');
+          const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          for (let n = w.nextNode(); n; n = w.nextNode()) { const v = fijar(n.nodeValue); if (v !== n.nodeValue) n.nodeValue = v; }
+          document.querySelectorAll('input').forEach(i => { const v = fijar(i.value); if (v !== i.value) i.value = v; });
+        });
         const archivo = path.join(destino, `${p.nombre}-${nombre}.png`);
         await pagina.screenshot({ path: archivo, fullPage: true, animations: 'disabled' });
         hechas.push(archivo);

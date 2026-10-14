@@ -1,7 +1,7 @@
 'use strict';
 /*
-  Ensayo general de la INSTALACIÓN LIMPIA en producción, con el código real
-  que hoy está desplegado (main) como "producción":
+  Ensayo general de la INSTALACIÓN LIMPIA (ya realizada en octubre de 2026),
+  con el código de la versión de demostración anterior como "producción":
 
    1. Producción actual (main) con datos de demostración en su base, que además
       comparte con tablas del Panel Maestro y con una tabla ajena.
@@ -17,7 +17,9 @@
    8. Reversión: la versión anterior vuelve a arrancar sobre la base nueva.
 
   Requiere TEST_DATABASE_URL (con permiso para crear bases) y
-  MASTER_RESERVAS_PRODUCCION = carpeta con el código de main.
+  MASTER_RESERVAS_DEMO = carpeta con el código de la versión de demostración
+  (commit a48226a, la que estaba en producción antes de la fase 6).
+  La actualización de la producción actual se ensaya en test/actualizacion.test.js.
 */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -34,9 +36,9 @@ const { cabecerasFirmadas } = require('../firma-plataforma');
 
 const ejecutar = promisify(execFile);
 const URL_PG = urlBasePruebas();
-const PRODUCCION = process.env.MASTER_RESERVAS_PRODUCCION;
+const PRODUCCION = process.env.MASTER_RESERVAS_DEMO;
 const omitir = !URL_PG ? 'Requiere TEST_DATABASE_URL'
-  : !PRODUCCION || !fs.existsSync(path.join(PRODUCCION, 'server.js')) ? 'Requiere MASTER_RESERVAS_PRODUCCION (código de main)'
+  : !PRODUCCION || !fs.existsSync(path.join(PRODUCCION, 'server.js')) ? 'Requiere MASTER_RESERVAS_DEMO (versión de demostración anterior)'
   : false;
 const CLAVE_PLATAFORMA = 'clave-de-plataforma-solo-para-pruebas-0123456789';
 const CLAVE = 'Una-clave-bastante-segura-7';

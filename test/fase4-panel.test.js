@@ -232,7 +232,7 @@ test.describe('Fase 4 · panel en el navegador', () => {
     try {
       assert.deepEqual(await nav(a.page), ['inicio', 'reservas', 'caja', 'productos', 'clientes', 'configuracion']);
       await a.page.evaluate(() => goTo('configuracion'));
-      assert.deepEqual(await tarjetas(a.page), ['Mi cuenta']);
+      assert.deepEqual(await tarjetas(a.page), ['Tu página de reservas', 'Mi cuenta'], 'el enlace para compartir lo ve todo el equipo');
     } finally {
       await a.ctx.close();
     }
