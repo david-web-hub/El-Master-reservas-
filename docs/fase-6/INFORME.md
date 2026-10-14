@@ -82,15 +82,20 @@ Panel (navegador) ──sesión de administrador──▶ Panel (servidor) ─�
 3. **Mensajes de error de sincronización sin el código de respuesta:** ahora indican, por ejemplo, «respondió 409: barbería protegida».
 4. **Plan inventado para El Máster:** al no tener plan, el Panel le asignaba el primero del catálogo. Ahora queda sin plan hasta que se le asigne.
 5. **Pantalla de acceso del Panel:** el fondo se cortaba a media altura; corregido.
+6. **Prueba inestable de la fase 4 (sesión vencida):** en GitHub Actions, otra petición del panel
+   detectaba la sesión cerrada y redirigía antes de que la prueba hiciera la suya. El comportamiento
+   era correcto; la prueba ahora acepta que la redirección llegue primero y sigue comprobando el aviso.
+7. **Datos de prueba:** dos pruebas nuevas dependían de nombres fijos o insertaban barberías sin su
+   aviso de alta; se corrigieron para que cada ejecución sea independiente.
 
 ## 4. Pruebas
 
 | Ejecución | Resultado |
 |---|---|
-| Reservas · `npm test` (agenda en archivo + PostgreSQL + navegador) | 122 pruebas; las 2 fallas de la primera corrida se debían a datos de prueba, se corrigieron y se volvieron a comprobar |
-| Reservas · `TEST_ALMACEN=postgres npm test` | igual (1 omitida, solo aplica al modo archivo) |
+| Reservas · `npm test` (agenda en archivo + PostgreSQL + navegador) | **122/122** |
+| Reservas · `TEST_ALMACEN=postgres npm test` | **121/121** + 1 omitida (solo aplica al modo archivo) |
 | Reservas · diseño contra `main` (38 capturas) | sin diferencias no aprobadas |
-| Panel · `npm test` con PostgreSQL, navegador y **Reservas real** | **52/52** |
+| Panel · `npm test` con PostgreSQL, navegador y **Reservas real** (local y GitHub Actions) | **52/52**, ninguna omitida |
 | Panel · `npm test` sin base | 10 correctas y 5 omitidas (requieren base) |
 | Panel · diseño contra `main` (40 capturas) | sin diferencias no aprobadas; 12 pantallas idénticas en cada tamaño |
 

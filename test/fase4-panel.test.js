@@ -210,7 +210,10 @@ test.describe('Fase 4 · panel en el navegador', () => {
     const { ctx, page } = await entrarComo(correo);
     try {
       await pool.query(`UPDATE sessions SET revoked_at = NOW() WHERE user_id = (SELECT id FROM users WHERE lower(email) = $1)`, [correo]);
-      await page.evaluate(() => loadBookings());
+      /* Cualquier petición del panel lo detecta; si otra llega antes, la página ya está navegando. */
+      await page.evaluate(() => loadBookings()).catch(error => {
+        if (!/Execution context was destroyed|navigation/i.test(error.message)) throw error;
+      });
       await page.waitForURL('**/acceso.html**');
       await page.waitForSelector('#aviso-login.error');
       assert.match(await page.textContent('#aviso-login'), /Tu sesión terminó/);
