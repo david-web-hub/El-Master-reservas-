@@ -145,6 +145,8 @@ test('ensayo de actualización: producción actual → fase 7 → vuelta atrás,
       await main.detener();
       main.borrar();
     }
+    otra.barberos = (await pool.query(
+      `SELECT data->>'name' AS n FROM barbers WHERE business_id = $1 ORDER BY position, created_at, id`, [otra.id])).rows.map(r => r.n);
     antes = await conteos(pool);
     huellaAntes = await huella(pool);
     assert.equal(antes.bookings, 1);
@@ -155,7 +157,8 @@ test('ensayo de actualización: producción actual → fase 7 → vuelta atrás,
   await t.test('2. esta versión arranca sobre la misma base: migra sin perder ni cambiar datos', async () => {
     const nueva = await iniciarServidor({ postgres: true, sesion: false, env: { DATABASE_URL: url, DEFAULT_BUSINESS_ID: 'el-master' } });
     try {
-      assert.ok(nueva.logs.some(l => l.includes('MIGRACIÓN APLICADA: 2026-10-fase7-001')), 'aplica la migración nueva');
+      /* La migración de la fase 7 queda aplicada (por esta versión o, si main ya es la fase 7, desde antes). */
+      assert.ok((await pool.query('SELECT to_regclass($1) AS t', ['public.business_whatsapp'])).rows[0].t, 'migración de la fase 7 aplicada');
       assert.deepEqual(await conteos(pool), antes, 'mismas filas en todas las tablas');
       assert.equal(await huella(pool), huellaAntes, 'mismo contenido');
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM business_whatsapp')).rows[0].n, 0, 'tabla nueva, vacía');
@@ -173,7 +176,8 @@ test('ensayo de actualización: producción actual → fase 7 → vuelta atrás,
       assert.equal(otraLogin.status, 200);
       const site = (await nueva.pedir('GET', `/b/${otra.slug}/api/public/site`, undefined, { cookie: null })).json;
       assert.equal(site.business.name, 'Barbería Existente', 'la barbería existente ya tiene su página pública');
-      assert.deepEqual(site.barbers.map(b => b.name), ['Rosa']);
+      assert.ok(otra.barberos.includes('Rosa'));
+      assert.deepEqual(site.barbers.map(b => b.name), otra.barberos, 'sus barberos de siempre');
     } finally {
       await nueva.detener();
       nueva.borrar();
