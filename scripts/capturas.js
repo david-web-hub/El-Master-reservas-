@@ -51,6 +51,7 @@ async function capturar(destino) {
         await pagina.evaluate(() => {
           const fijar = t => t
             .replace(/propietario-[a-z0-9-]+@prueba\.test/g, 'propietario@prueba.test')
+            .replace(/http:\/\/127\.0\.0\.1:\d+/g, 'http://127.0.0.1:10000')
             .replace(/\d{1,2}\/\d{1,2}\/\d{4},? \d{1,2}:\d{2}(:\d{2})?( [ap]\. ?m\.)?/g, '14/10/2026, 10:00:00 a. m.');
           const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
           for (let n = w.nextNode(); n; n = w.nextNode()) { const v = fijar(n.nodeValue); if (v !== n.nodeValue) n.nodeValue = v; }
