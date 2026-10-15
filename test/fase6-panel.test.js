@@ -31,7 +31,7 @@ test.describe('Fase 6 · aviso de suscripción en el panel', () => {
     const sinSsl = new URL(URL_PG).searchParams.get('sslmode') === 'disable';
     pool = new Pool({ connectionString: URL_PG, ssl: sinSsl ? false : { rejectUnauthorized: false }, max: 2 });
     pool.on('error', () => {});
-    const texto = JSON.stringify({ plans: [{ name: 'Individual', price: 9.99, trialDays: 7 }, { name: 'Pro', price: 19.99, trialDays: 7 }] });
+    const texto = JSON.stringify({ plans: [{ name: 'Individual', price: 10.99, trialDays: 7, maxBarbers: 1 }, { name: 'Pro', price: 19.99, trialDays: 7, maxBarbers: 4 }] });
     const r = await fetch(s.base + '/api/plataforma/planes', {
       method: 'PUT', body: texto,
       headers: { 'Content-Type': 'application/json', ...cabecerasFirmadas(CLAVE_PLATAFORMA, { metodo: 'PUT', ruta: '/api/plataforma/planes', cuerpo: texto }) }
