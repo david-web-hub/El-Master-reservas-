@@ -8521,6 +8521,62 @@ function applyBarberFields(db, barber, body, isNew) {
   return null;
 }
 
+/* ---------------- PLANES (solo el propietario) ----------------
+   Catálogo real (el del Panel Maestro), plan actual, límites y la
+   solicitud de cambio. Sin cobros integrados, un cambio es una solicitud
+   que aprueba el Panel Maestro: hasta entonces no cambia nada.
+*/
+async function datosPlanes() {
+  const negocio = negocioActual();
+  const [catalogo, subscription, limits, request] = await Promise.all([
+    plataforma.catalogo(), plataforma.suscripcion(negocio), plataforma.limitesDe(negocio), plataforma.solicitudDe(negocio)
+  ]);
+  const actual = String(subscription?.plan || '').toLowerCase();
+  return {
+    ok: true,
+    principal: negocio === DEFAULT_BUSINESS_ID,
+    /* Solo los planes publicados; el actual se conserva aunque ya no se ofrezca. */
+    plans: catalogo
+      .filter(p => p.active || p.name.toLowerCase() === actual)
+      .map(p => ({ name: p.name, price: p.price, trialDays: p.trialDays, maxBarbers: p.maxBarbers ?? null,
+        available: p.active, current: p.name.toLowerCase() === actual })),
+    subscription,
+    limits,
+    request
+  };
+}
+
+app.get('/api/admin/planes', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!plataforma) return res.status(503).json({ ok: false, error: 'Los planes requieren PostgreSQL' });
+  try {
+    res.json(await datosPlanes());
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'PLANES DEL PROPIETARIO');
+  }
+});
+
+app.post('/api/admin/planes/solicitud', async (req, res) => {
+  if (!plataforma) return res.status(503).json({ ok: false, error: 'Los planes requieren PostgreSQL' });
+  try {
+    const solicitud = await plataforma.solicitarPlan(negocioActual(), req.body?.plan, { userId: req.sesion?.usuario?.id });
+    console.log(`PLANES: ${negocioActual()} solicita el plan ${solicitud.requestedPlan} (pendiente de aprobación)`);
+    res.status(201).json({ ...(await datosPlanes()), message: 'Solicitud enviada. Tu plan cambiará cuando Master Fade la apruebe.' });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'SOLICITUD DE PLAN');
+  }
+});
+
+app.delete('/api/admin/planes/solicitud', async (req, res) => {
+  if (!plataforma) return res.status(503).json({ ok: false, error: 'Los planes requieren PostgreSQL' });
+  try {
+    await plataforma.cancelarSolicitud(negocioActual());
+    res.json({ ...(await datosPlanes()), message: 'Solicitud cancelada.' });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'CANCELAR SOLICITUD');
+  }
+});
+
 /* ---------------- WHATSAPP PROPIO DE LA BARBERÍA ---------------- */
 
 function responderErrorWhatsApp(res, error) {
@@ -12126,6 +12182,24 @@ app.post('/api/plataforma/correo/prueba', async (req, res) => {
   } catch (error) {
     console.error('ERROR CORREO DE PRUEBA:', error.message);
     res.status(500).json({ ok: false, error: 'No se pudo enviar el correo de prueba' });
+  }
+});
+
+app.get('/api/plataforma/solicitudes', async (req, res) => {
+  try {
+    res.json({ ok: true, requests: await plataforma.listarSolicitudes() });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'SOLICITUDES');
+  }
+});
+
+app.post('/api/plataforma/solicitudes/:id/resolver', async (req, res) => {
+  try {
+    const solicitud = await plataforma.resolverSolicitud(req.params.id, req.body || {});
+    console.log(`PLATAFORMA: solicitud ${solicitud.id} de ${solicitud.businessId} → ${solicitud.status}`);
+    res.json({ ok: true, request: solicitud });
+  } catch (error) {
+    responderErrorPlataforma(res, error, 'RESOLVER SOLICITUD');
   }
 });
 

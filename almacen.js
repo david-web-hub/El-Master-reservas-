@@ -440,6 +440,29 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-fase9-001',
+  descripcion: 'Solicitudes de cambio de plan de los propietarios (se aprueban en el Panel Maestro)',
+  sql: `
+    /* Solo crea una tabla nueva. */
+    CREATE TABLE IF NOT EXISTS plan_requests (
+      id TEXT PRIMARY KEY,
+      business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      current_plan TEXT,
+      requested_plan TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+      requested_by TEXT,
+      reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      decided_at TIMESTAMPTZ
+    );
+    /* Una sola solicitud pendiente por barbería. */
+    CREATE UNIQUE INDEX IF NOT EXISTS plan_requests_una_pendiente ON plan_requests (business_id) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS plan_requests_negocio_idx ON plan_requests (business_id, created_at DESC);
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
