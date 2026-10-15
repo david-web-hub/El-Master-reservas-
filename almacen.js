@@ -426,6 +426,20 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-fase8-001',
+  descripcion: 'Límite de barberos activos de cada plan (copia del catálogo del Panel Maestro)',
+  sql: `
+    /* Solo añade una columna. NULL = sin límite. */
+    ALTER TABLE platform_plans ADD COLUMN IF NOT EXISTS max_barbers INTEGER
+      CHECK (max_barbers IS NULL OR max_barbers BETWEEN 1 AND 1000);
+    /* Límites de los planes actuales hasta que el Panel Maestro envíe los suyos. */
+    UPDATE platform_plans SET max_barbers = CASE lower(name)
+        WHEN 'individual' THEN 1 WHEN 'pro' THEN 4 WHEN 'business' THEN 10 END
+     WHERE max_barbers IS NULL AND lower(name) IN ('individual', 'pro', 'business');
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 

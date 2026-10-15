@@ -31,7 +31,7 @@ test.describe('Fase 6 · aviso de suscripción en el panel', () => {
     const sinSsl = new URL(URL_PG).searchParams.get('sslmode') === 'disable';
     pool = new Pool({ connectionString: URL_PG, ssl: sinSsl ? false : { rejectUnauthorized: false }, max: 2 });
     pool.on('error', () => {});
-    const texto = JSON.stringify({ plans: [{ name: 'Individual', price: 9.99, trialDays: 7 }, { name: 'Pro', price: 19.99, trialDays: 7 }] });
+    const texto = JSON.stringify({ plans: [{ name: 'Individual', price: 10.99, trialDays: 7, maxBarbers: 1 }, { name: 'Pro', price: 19.99, trialDays: 7, maxBarbers: 4 }] });
     const r = await fetch(s.base + '/api/plataforma/planes', {
       method: 'PUT', body: texto,
       headers: { 'Content-Type': 'application/json', ...cabecerasFirmadas(CLAVE_PLATAFORMA, { metodo: 'PUT', ruta: '/api/plataforma/planes', cuerpo: texto }) }
@@ -128,7 +128,7 @@ test.describe('Fase 6 · aviso de suscripción en el panel', () => {
       const q = new URLSearchParams({ plan: 'Pro', negocio: nombreNegocio, nombre: 'Rosa', correo, telefono: '+593 99 000 0000', pais: 'Colombia' });
       await page.goto(`${s.base}/acceso.html?${q}#registro`);
       await page.waitForSelector('#reg-plan:not(.oculto)');
-      assert.equal(await page.textContent('#reg-plan'), 'Plan Pro · $19.99 al mes · 7 días de prueba gratis');
+      assert.equal(await page.textContent('#reg-plan'), 'Plan Pro · $19.99 al mes · hasta 4 barberos · 7 días de prueba gratis');
       assert.equal(await page.inputValue('#reg-negocio'), nombreNegocio);
       assert.equal(await page.inputValue('#reg-email'), correo);
       assert.equal(await page.inputValue('#reg-clave'), '', 'la contraseña nunca viaja en el enlace');

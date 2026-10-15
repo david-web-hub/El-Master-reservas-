@@ -7143,9 +7143,23 @@ function renderBarberSettings() {
 
   }).join('');
 
+  /* Límite de barberos activos del plan (el servidor lo aplica; aquí solo se informa). */
+  const maximo = currentSession?.limits?.maxBarbers ?? null;
+  const activos = allBarbers.filter(barber => barber.active !== false).length;
+  const lleno = maximo !== null && activos >= maximo;
+  const plan = currentSession?.limits?.plan || '';
+  const limite = maximo === null ? '' : `
+    <div class="card subscription-notice${lleno ? ' danger' : ''}" id="barberLimit" style="margin:0 0 14px">
+      <h3>Barberos activos: ${activos} de ${maximo}</h3>
+      <p>${lleno
+        ? `Llegaste al máximo de tu plan ${esc(plan)}. Para agregar o activar otro barbero, cambia a un plan superior con Master Fade, o desactiva uno.`
+        : `Tu plan ${esc(plan)} permite hasta ${maximo} ${maximo === 1 ? 'barbero activo' : 'barberos activos'}.`}</p>
+    </div>`;
+
   $('settingContent').innerHTML = `
+    ${limite}
     <div class="toolbar" style="justify-content:flex-end;margin-bottom:8px">
-      <button class="btn btn-gold" onclick="openBarberModal()">+ Agregar barbero</button>
+      <button class="btn btn-gold" id="addBarberBtn" onclick="openBarberModal()"${lleno ? ' disabled title="Límite de tu plan alcanzado"' : ''}>+ Agregar barbero</button>
     </div>
     ${cards || '<div class="empty">Todavía no hay barberos.</div>'}
     <p class="label">Los barberos no se eliminan: se desactivan para conservar el historial de reservas y ventas.</p>
