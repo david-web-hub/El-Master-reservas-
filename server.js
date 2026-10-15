@@ -8571,12 +8571,50 @@ app.delete('/api/admin/whatsapp', async (req, res) => {
   }
 });
 
-app.post('/api/admin/barbers', async (req, res) => {
+/*
+  LÍMITE DE BARBEROS DEL PLAN (se aplica aquí, en el servidor).
+  Cuentan los barberos activos. Crear uno activo o activar uno desactivado
+  se rechaza si la barbería ya llegó al máximo de su plan. Los cambios de
+  barberos de una misma barbería se hacen de uno en uno, para que dos
+  solicitudes a la vez no superen el límite.
+*/
+const colaBarberos = new Map();
+
+function enColaBarberos(negocio, tarea) {
+  const anterior = colaBarberos.get(negocio) || Promise.resolve();
+  const actual = anterior.catch(() => {}).then(tarea);
+  const fin = actual.catch(() => {});
+  colaBarberos.set(negocio, fin);
+  fin.then(() => { if (colaBarberos.get(negocio) === fin) colaBarberos.delete(negocio); });
+  return actual;
+}
+
+async function rechazoPorLimite(db, excluirId) {
+  if (!plataforma || MODO_ALMACEN !== 'postgres') return null;
+  const limites = await plataforma.limitesDe(negocioActual());
+  if (!limites || limites.maxBarbers === null) return null;
+  const activos = (db.barbers || []).filter(b => b.active !== false && String(b.id) !== String(excluirId)).length;
+  if (activos < limites.maxBarbers) return null;
+  const n = limites.maxBarbers;
+  return {
+    ok: false,
+    code: 'LIMITE_BARBEROS',
+    error: `Tu plan ${limites.plan} permite ${n} ${n === 1 ? 'barbero activo' : 'barberos activos'} y ya ${activos === 1 ? 'tienes 1' : 'tienes ' + activos}. ` +
+      'Para agregar o activar otro, cambia a un plan superior con Master Fade, o desactiva un barbero.',
+    limits: { plan: limites.plan, maxBarbers: n, activeBarbers: activos }
+  };
+}
+
+app.post('/api/admin/barbers', (req, res) => enColaBarberos(negocioActual(), async () => {
   try {
     const db = readDb();
     const barber = { id: createId('barber'), active: true, acceptsBookings: true, serviceIds: [] };
     const error = applyBarberFields(db, barber, req.body || {}, true);
     if (error) return res.status(400).json({ ok: false, error });
+    if (barber.active !== false) {
+      const limite = await rechazoPorLimite(db);
+      if (limite) return res.status(403).json(limite);
+    }
     db.barbers.push(barber);
     await writeDb(db);
     res.status(201).json({ ok: true, barber });
@@ -8584,13 +8622,19 @@ app.post('/api/admin/barbers', async (req, res) => {
     console.error('ERROR CREANDO BARBERO:', error);
     res.status(500).json({ ok: false, error: 'No se pudo crear el barbero' });
   }
-});
+}));
 
-app.patch('/api/admin/barbers/:id', async (req, res) => {
+app.patch('/api/admin/barbers/:id', (req, res) => enColaBarberos(negocioActual(), async () => {
   try {
     const db = readDb();
     const barber = db.barbers.find(b => String(b.id) === String(req.params.id));
     if (!barber) return res.status(404).json({ ok: false, error: 'Barbero no encontrado' });
+
+    /* Activar un barbero desactivado cuenta para el límite del plan. */
+    if (barber.active === false && req.body && req.body.active === true) {
+      const limite = await rechazoPorLimite(db, barber.id);
+      if (limite) return res.status(403).json(limite);
+    }
 
     const error = applyBarberFields(db, barber, req.body || {}, false);
     if (error) return res.status(400).json({ ok: false, error });
@@ -8606,7 +8650,7 @@ app.patch('/api/admin/barbers/:id', async (req, res) => {
     console.error('ERROR EDITANDO BARBERO:', error);
     res.status(500).json({ ok: false, error: 'No se pudo editar el barbero' });
   }
-});
+}));
 
 /* ---------------- IMÁGENES (PostgreSQL) ---------------- */
 
@@ -11494,6 +11538,8 @@ app.get('/api/auth/sesion', async (req, res) => {
   if (plataforma && !req.sesion.local) {
     try {
       descripcion.subscription = await plataforma.suscripcion(req.sesion.negocio.id);
+      /* Barberos activos y los que permite su plan (null = sin límite). */
+      descripcion.limits = await plataforma.limitesDe(req.sesion.negocio.id);
     } catch (error) {
       console.error('ERROR LEYENDO SUSCRIPCIÓN:', error.message);
     }
@@ -11996,7 +12042,7 @@ app.use('/api/plataforma', (req, res, next) => {
 function responderErrorPlataforma(res, error, contexto) {
 
   if (error instanceof ErrorPlataforma) {
-    return res.status(error.status).json({ ok: false, code: error.code, error: error.message });
+    return res.status(error.status).json({ ok: false, code: error.code, error: error.message, ...(error.detalle || {}) });
   }
 
   console.error(`ERROR PLATAFORMA (${contexto}):`, error.message);
@@ -12111,7 +12157,7 @@ app.post('/api/plataforma/eventos/confirmar', async (req, res) => {
 app.get('/api/public/planes', async (req, res) => {
   try {
     const planes = plataforma ? (await plataforma.catalogo()).filter(p => p.active) : [];
-    res.json({ ok: true, plans: planes.map(p => ({ name: p.name, price: p.price, trialDays: p.trialDays })) });
+    res.json({ ok: true, plans: planes.map(p => ({ name: p.name, price: p.price, trialDays: p.trialDays, maxBarbers: p.maxBarbers ?? null })) });
   } catch (error) {
     responderErrorPlataforma(res, error, 'PLANES PÚBLICOS');
   }

@@ -544,6 +544,7 @@ label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 6px
       if (!p) return;
       planElegido = p.name;
       $('reg-plan').textContent = `Plan ${p.name} · $${Number(p.price).toFixed(2)} al mes` +
+        (p.maxBarbers ? ` · hasta ${p.maxBarbers} ${p.maxBarbers === 1 ? 'barbero' : 'barberos'}` : '') +
         (p.trialDays > 0 ? ` · ${p.trialDays} días de prueba gratis` : '');
       $('reg-plan').classList.remove('oculto');
     }).catch(() => {});

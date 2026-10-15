@@ -81,6 +81,34 @@ function crearPlataforma({ pool }) {
     return r.rows[0] || null;
   }
 
+  /*
+    Límite de barberos de una barbería: el de su plan en el catálogo del Panel
+    Maestro. Sin plan, con un plan sin límite o protegida (El Máster): sin límite.
+    Cuentan los barberos activos (los desactivados se conservan y no cuentan).
+  */
+  const SQL_ACTIVOS = `(SELECT count(*) FROM barbers x WHERE x.business_id = b.id
+                          AND coalesce(x.data->>'active', 'true') <> 'false')::int`;
+
+  async function limitesDe(businessId, consulta = pool) {
+    const r = await consulta.query(
+      `SELECT b.plan, b.protected, pp.max_barbers, ${SQL_ACTIVOS} AS activos
+       FROM businesses b LEFT JOIN platform_plans pp ON lower(pp.name) = lower(b.plan)
+       WHERE b.id = $1`, [businessId]);
+    const f = r.rows[0];
+    if (!f) return null;
+    return {
+      plan: f.plan || null,
+      maxBarbers: f.protected ? null : (f.max_barbers ?? null),
+      activeBarbers: f.activos
+    };
+  }
+
+  async function maximoDelPlan(plan, consulta = pool) {
+    if (!plan) return null;
+    const r = await consulta.query('SELECT max_barbers FROM platform_plans WHERE lower(name) = lower($1)', [plan]);
+    return r.rows[0] ? r.rows[0].max_barbers ?? null : null;
+  }
+
   async function suscripcion(businessId, ahora = new Date()) {
     const b = await filaNegocio(businessId);
     return b ? resumenSuscripcion(b, ahora) : null;
@@ -106,6 +134,8 @@ function crearPlataforma({ pool }) {
                  WHERE x.business_id = b.id AND coalesce(x.customer_phone, '') <> '')::int AS n_clients,
               ${ventas ? `(SELECT coalesce(sum(s.total), 0) FROM sales s WHERE s.business_id = b.id
                  AND s.created_at > NOW() - interval '30 days')::float` : '0::float'} AS sales_30d,
+              ${SQL_ACTIVOS} AS n_active_barbers,
+              (SELECT pp.max_barbers FROM platform_plans pp WHERE lower(pp.name) = lower(b.plan)) AS plan_max_barbers,
               o.name AS owner_name, o.email AS owner_email
        FROM businesses b
        LEFT JOIN LATERAL (
@@ -127,6 +157,9 @@ function crearPlataforma({ pool }) {
       subscription: resumenSuscripcion(b, ahora),
       stats: {
         barbers: b.n_barbers,
+        activeBarbers: b.n_active_barbers,
+        /* Barberos activos que permite su plan (null = sin límite; El Máster no tiene límite). */
+        maxBarbers: b.protected ? null : (b.plan_max_barbers ?? null),
         users: b.n_users,
         bookings: b.n_bookings,
         bookingsLast30Days: b.n_bookings_30d,
@@ -174,6 +207,24 @@ function crearPlataforma({ pool }) {
         await client.query('ROLLBACK');
         return resumenSuscripcion(b);
       }
+      /*
+        Bajar a un plan con menos barberos: no se borra ni se desactiva ninguno.
+        El cambio se rechaza hasta que el propietario deje activos los que permite
+        el plan nuevo. Los cambios de estado o fechas con el mismo plan no se bloquean.
+      */
+      const cambiaPlan = String(plan || '').toLowerCase() !== String(b.plan || '').toLowerCase();
+      if (cambiaPlan && !b.protected) {
+        const maximo = await maximoDelPlan(plan, client);
+        const activos = (await client.query(
+          `SELECT ${SQL_ACTIVOS} AS n FROM businesses b WHERE b.id = $1`, [b.id])).rows[0].n;
+        if (maximo !== null && activos > maximo) {
+          const e = new ErrorPlataforma(409, 'LIMITE_BARBEROS',
+            `La barbería tiene ${activos} barberos activos y el plan ${plan} permite ${maximo}. ` +
+            'El propietario debe desactivar barberos antes de cambiar a este plan (no se borra ninguno).');
+          e.detalle = { activeBarbers: activos, maxBarbers: maximo };
+          throw e;
+        }
+      }
       const r = await client.query(
         `UPDATE businesses SET status = $2, plan = $3, trial_ends_at = $4, current_period_end = $5,
                 subscription_version = $6, subscription_updated_at = NOW(), updated_at = NOW()
@@ -201,18 +252,28 @@ function crearPlataforma({ pool }) {
       if (!nombre || nombre.length > 60 || !Number.isInteger(dias) || dias < 0 || dias > 365 || !Number.isFinite(precio) || precio < 0) {
         throw new ErrorPlataforma(400, 'DATOS_INVALIDOS', `Plan no válido en la posición ${i + 1}`);
       }
-      return { nombre, dias, precio, activo: p.active !== false, posicion: i };
+      /* maxBarbers: número de barberos activos permitidos (null = sin límite). Sin el campo, se conserva el actual. */
+      let maximo;
+      if (p && Object.prototype.hasOwnProperty.call(p, 'maxBarbers')) {
+        maximo = p.maxBarbers === null ? null : Number(p.maxBarbers);
+        if (maximo !== null && (!Number.isInteger(maximo) || maximo < 1 || maximo > 1000)) {
+          throw new ErrorPlataforma(400, 'DATOS_INVALIDOS', `Límite de barberos no válido en la posición ${i + 1}`);
+        }
+      }
+      return { nombre, dias, precio, activo: p.active !== false, posicion: i, maximo };
     });
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const anteriores = new Map((await client.query('SELECT name, max_barbers FROM platform_plans')).rows.map(r => [r.name, r.max_barbers]));
       await client.query('DELETE FROM platform_plans');
       for (const p of planes) {
+        const maximo = p.maximo === undefined ? (anteriores.get(p.nombre) ?? null) : p.maximo;
         await client.query(
-          `INSERT INTO platform_plans (name, price, trial_days, active, position) VALUES ($1, $2, $3, $4, $5)
+          `INSERT INTO platform_plans (name, price, trial_days, active, position, max_barbers) VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (name) DO UPDATE SET price = EXCLUDED.price, trial_days = EXCLUDED.trial_days,
-             active = EXCLUDED.active, position = EXCLUDED.position, updated_at = NOW()`,
-          [p.nombre, p.precio, p.dias, p.activo, p.posicion]);
+             active = EXCLUDED.active, position = EXCLUDED.position, max_barbers = EXCLUDED.max_barbers, updated_at = NOW()`,
+          [p.nombre, p.precio, p.dias, p.activo, p.posicion, maximo]);
       }
       await client.query('COMMIT');
     } catch (error) {
@@ -225,8 +286,8 @@ function crearPlataforma({ pool }) {
   }
 
   async function catalogo() {
-    const r = await pool.query('SELECT name, price, trial_days, active FROM platform_plans ORDER BY position, name');
-    return r.rows.map(p => ({ name: p.name, price: Number(p.price), trialDays: p.trial_days, active: p.active }));
+    const r = await pool.query('SELECT name, price, trial_days, active, max_barbers FROM platform_plans ORDER BY position, name');
+    return r.rows.map(p => ({ name: p.name, price: Number(p.price), trialDays: p.trial_days, active: p.active, maxBarbers: p.max_barbers }));
   }
 
   /* Bandeja de salida: eventos que el Panel todavía no confirmó. */
@@ -253,7 +314,7 @@ function crearPlataforma({ pool }) {
   }
 
   return {
-    protegerNegocios, suscripcion, listarNegocios, negocio, aplicarSuscripcion,
+    protegerNegocios, suscripcion, limitesDe, listarNegocios, negocio, aplicarSuscripcion,
     sincronizarPlanes, catalogo, eventosPendientes, confirmarEventos
   };
 }
