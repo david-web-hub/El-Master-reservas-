@@ -1356,6 +1356,11 @@ textarea {
 .secret-box{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;word-break:break-all;background:#0c1014;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}
 .user-avatar{font-weight:850;color:var(--gold2)}
 .subscription-notice{margin:-6px 0 22px;border-left:4px solid var(--gold2)}
+.plans-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.plan-card h3{margin:0 0 6px}
+.plan-card .plan-price{font-size:28px;font-weight:800;margin:4px 0 10px}
+.plan-card.current{outline:2px solid var(--gold2)}
+.plan-card .actions{margin-top:12px}
 .subscription-notice.danger{border-left-color:var(--red)}
 .subscription-notice h3{margin:0 0 4px}
 .subscription-notice p{margin:0;color:var(--muted)}
@@ -2131,6 +2136,16 @@ textarea {
          CONFIGURACIÓN
     ==================================================== -->
 
+    <!-- ===================================================
+         PLANES (propietario de una barbería con suscripción)
+    ==================================================== -->
+
+    <section
+      class="section"
+      id="planes">
+      <div id="planesContent"><div class="empty">Cargando…</div></div>
+    </section>
+
     <section
       class="section"
       id="configuracion">
@@ -2326,6 +2341,13 @@ const pages = [
     '⚙',
     'Configuración',
     'Personaliza y administra el negocio'
+  ],
+
+  [
+    'planes',
+    '◇',
+    'Planes',
+    'Tu plan de Master Fade'
   ]
 
 ];
@@ -2547,6 +2569,9 @@ function initNav() {
     ).join('');
 
 
+  /* Una columna por botón (7 sin «Planes», 8 con «Planes»). */
+  $('mobileNav').style.gridTemplateColumns = `repeat(${visiblePages().length},1fr)`;
+
   $('mobileNav').innerHTML =
     visiblePages().map(
       page => {
@@ -2667,6 +2692,10 @@ function goTo(pageId) {
     .textContent =
       page?.[3] || '';
 
+
+  if (pageId === 'planes') {
+    loadPlanes();
+  }
 
   if (
     pageId === 'caja'
@@ -8051,8 +8080,13 @@ function can(permission) {
 }
 
 function visiblePages() {
-  return pages.filter(page =>
-    !PAGE_PERMISSIONS[page[0]] || PAGE_PERMISSIONS[page[0]].some(can));
+  return pages.filter(page => {
+    /* Planes: solo el propietario de una barbería con suscripción (no la principal ni el modo local). */
+    if (page[0] === 'planes') {
+      return Boolean(currentSession) && !currentSession.local && currentSession.principal === false && currentSession.role === 'owner';
+    }
+    return !PAGE_PERMISSIONS[page[0]] || PAGE_PERMISSIONS[page[0]].some(can);
+  });
 }
 
 function settingAllowed(key) {
@@ -8164,6 +8198,98 @@ async function logout() {
   }
   redirigiendoAcceso = true;
   location.replace('/acceso.html');
+}
+
+/* ---------- Planes de Master Fade ----------
+   Catálogo real (el que publica el Panel Maestro). Cambiar de plan es una
+   solicitud: el plan no cambia hasta que Master Fade la aprueba. */
+const ESTADO_SUSCRIPCION = { trial: 'Prueba gratuita', active: 'Activa', past_due: 'Pago pendiente', expired: 'Vencida', suspended: 'Suspendida' };
+
+async function loadPlanes() {
+  try {
+    renderPlanes(await request('/api/admin/planes'));
+  } catch (error) {
+    $('planesContent').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+
+function renderPlanes(data) {
+  const sub = data.subscription || {};
+  const lim = data.limits || {};
+  const sol = data.request;
+  const dias = n => n === 1 ? '1 día' : `${n} días`;
+  const fecha = v => v ? new Date(v).toLocaleDateString('es-EC', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  const barberos = n => n == null ? 'Barberos sin límite' : `Hasta ${n} ${n === 1 ? 'barbero' : 'barberos'}`;
+
+  const estado = sub.status === 'trial'
+    ? `Prueba gratuita${sub.daysLeft !== null && sub.daysLeft !== undefined ? ': te quedan ' + dias(sub.daysLeft) : ''}${sub.trialEndsAt ? ' (hasta el ' + esc(fecha(sub.trialEndsAt)) + ')' : ''}`
+    : `${esc(ESTADO_SUSCRIPCION[sub.status] || sub.status || '')}${sub.status === 'active' && sub.currentPeriodEnd ? ' · pagado hasta el ' + esc(fecha(sub.currentPeriodEnd)) : ''}`;
+
+  let aviso = '';
+  if (sol && sol.status === 'pending') {
+    aviso = `<div class="card subscription-notice" id="planRequest" style="margin:0 0 16px">
+      <h3>Solicitud pendiente: plan ${esc(sol.requestedPlan)}</h3>
+      <p>Enviada el ${esc(fecha(sol.createdAt))}. Tu plan actual y sus límites siguen igual hasta que Master Fade la apruebe.</p>
+      <div class="actions"><button class="btn btn-dark" onclick="cancelarSolicitudPlan()">Cancelar solicitud</button></div>
+    </div>`;
+  } else if (sol && sol.status === 'approved') {
+    aviso = `<div class="card subscription-notice" id="planRequest" style="margin:0 0 16px"><h3>Solicitud aprobada</h3><p>Ya tienes el plan ${esc(sol.requestedPlan)}.</p></div>`;
+  } else if (sol && sol.status === 'rejected') {
+    aviso = `<div class="card subscription-notice danger" id="planRequest" style="margin:0 0 16px"><h3>Solicitud no aprobada: plan ${esc(sol.requestedPlan)}</h3><p>${esc(sol.reason || 'Comunícate con Master Fade para más información.')}</p></div>`;
+  }
+
+  const pendiente = sol && sol.status === 'pending' ? sol.requestedPlan : null;
+  const tarjetas = (data.plans || []).map(p => {
+    const excede = p.maxBarbers != null && lim.activeBarbers > p.maxBarbers;
+    let accion;
+    if (p.current) accion = '<span class="badge badge-gold">Plan actual</span>';
+    else if (pendiente === p.name) accion = '<span class="badge badge-gold">Solicitud pendiente</span>';
+    else accion = `<button class="btn btn-gold" onclick="solicitarPlan(this.closest('[data-plan]').dataset.plan)">Solicitar este plan</button>`;
+    return `<div class="card plan-card${p.current ? ' current' : ''}" data-plan="${esc(p.name)}">
+      <h3>${esc(p.name)}</h3>
+      <div class="plan-price">$${Number(p.price).toFixed(2)}<span class="label"> /mes</span></div>
+      <div class="label">${esc(barberos(p.maxBarbers))}</div>
+      ${p.trialDays > 0 ? `<div class="label">${esc(dias(p.trialDays))} de prueba para nuevas barberías</div>` : ''}
+      ${p.current && !p.available ? '<div class="label">Este plan ya no se ofrece a nuevas barberías; lo conservas.</div>' : ''}
+      ${!p.current && excede ? `<div class="label" style="color:var(--red)">Tienes ${lim.activeBarbers} barberos activos: desactiva los que sobran para elegirlo.</div>` : ''}
+      <div class="actions">${accion}</div>
+    </div>`;
+  }).join('');
+
+  $('planesContent').innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <div class="label">Tu plan</div>
+      <h2 style="margin:4px 0" id="planActual">${esc(sub.plan || 'Sin plan asignado')}</h2>
+      <p class="label" id="planEstado">${estado}</p>
+      <p class="label">Barberos activos: ${lim.activeBarbers ?? 0}${lim.maxBarbers != null ? ' de ' + lim.maxBarbers : ' (sin límite)'}</p>
+    </div>
+    ${aviso}
+    <div class="plans-grid">${tarjetas || '<div class="empty">No hay planes disponibles en este momento.</div>'}</div>
+    <p class="label" style="margin-top:14px">Los cambios de plan los aprueba Master Fade. Ningún cambio borra tus barberos, reservas, clientes ni tu configuración.</p>`;
+}
+
+async function solicitarPlan(nombre) {
+  if (!confirm(`¿Solicitar el plan ${nombre}? Tu plan actual se mantiene hasta que Master Fade apruebe el cambio.`)) return;
+  try {
+    const data = await request('/api/admin/planes/solicitud', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: nombre })
+    });
+    renderPlanes(data);
+    toast(data.message || 'Solicitud enviada');
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function cancelarSolicitudPlan() {
+  if (!confirm('¿Cancelar la solicitud de cambio de plan?')) return;
+  try {
+    const data = await request('/api/admin/planes/solicitud', { method: 'DELETE' });
+    renderPlanes(data);
+    toast(data.message || 'Solicitud cancelada');
+  } catch (error) {
+    toast(error.message, true);
+  }
 }
 
 /* ---------- Página pública de reservas ---------- */

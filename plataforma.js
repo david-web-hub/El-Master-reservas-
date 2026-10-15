@@ -242,6 +242,130 @@ function crearPlataforma({ pool }) {
     }
   }
 
+  /*
+    SOLICITUDES DE CAMBIO DE PLAN (sección «Planes» del propietario).
+    No hay cobros integrados: el propietario solo solicita; el plan cambia
+    cuando el Panel Maestro aprueba y aplica la suscripción. Hasta entonces
+    la barbería conserva su plan y sus límites actuales.
+  */
+  const formatoSolicitud = r => r ? {
+    id: r.id, businessId: r.business_id, businessName: r.business_name || undefined,
+    currentPlan: r.current_plan, requestedPlan: r.requested_plan, status: r.status,
+    reason: r.reason || null, createdAt: iso(r.created_at), decidedAt: iso(r.decided_at)
+  } : null;
+
+  /* La pendiente, o la última resuelta en los últimos 30 días (para avisar al propietario). */
+  async function solicitudDe(businessId) {
+    const r = await pool.query(
+      `SELECT * FROM plan_requests WHERE business_id = $1
+         AND (status = 'pending' OR (status IN ('approved', 'rejected') AND decided_at > NOW() - interval '30 days'))
+       ORDER BY (status = 'pending') DESC, created_at DESC LIMIT 1`, [businessId]);
+    return formatoSolicitud(r.rows[0]);
+  }
+
+  async function solicitarPlan(businessId, planPedido, { userId } = {}) {
+    const nombre = String(planPedido || '').trim();
+    if (!nombre || nombre.length > 60) throw new ErrorPlataforma(400, 'PLAN_INVALIDO', 'Elige un plan.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const b = (await client.query('SELECT * FROM businesses WHERE id = $1 FOR UPDATE', [businessId])).rows[0];
+      if (!b) throw new ErrorPlataforma(404, 'NO_ENCONTRADO', 'Barbería no encontrada');
+      if (b.protected) {
+        throw new ErrorPlataforma(409, 'NEGOCIO_PROTEGIDO', 'La barbería principal no tiene plan: no necesita cambiarlo.');
+      }
+      const plan = (await client.query(
+        'SELECT name, max_barbers FROM platform_plans WHERE lower(name) = lower($1) AND active', [nombre])).rows[0];
+      if (!plan) throw new ErrorPlataforma(400, 'PLAN_INVALIDO', 'Ese plan no está disponible. Elige otro.');
+      if (String(b.plan || '').toLowerCase() === plan.name.toLowerCase()) {
+        throw new ErrorPlataforma(400, 'MISMO_PLAN', `Ya tienes el plan ${plan.name}.`);
+      }
+      /* Misma regla de la fase 8: no se puede pedir un plan con menos barberos de los que hay activos. */
+      const activos = (await client.query(`SELECT ${SQL_ACTIVOS} AS n FROM businesses b WHERE b.id = $1`, [b.id])).rows[0].n;
+      if (plan.max_barbers !== null && activos > plan.max_barbers) {
+        const e = new ErrorPlataforma(409, 'LIMITE_BARBEROS',
+          `Tienes ${activos} barberos activos y el plan ${plan.name} permite ${plan.max_barbers}. ` +
+          'Desactiva los que sobran en Configuración → Barberos antes de solicitar este plan (no se borra ninguno).');
+        e.detalle = { activeBarbers: activos, maxBarbers: plan.max_barbers };
+        throw e;
+      }
+      /* Una nueva solicitud reemplaza a la pendiente. */
+      const anterior = (await client.query(
+        `UPDATE plan_requests SET status = 'cancelled', decided_at = NOW() WHERE business_id = $1 AND status = 'pending' RETURNING id`,
+        [b.id])).rows[0];
+      const id = 'sol_' + require('node:crypto').randomBytes(9).toString('hex');
+      const r = await client.query(
+        `INSERT INTO plan_requests (id, business_id, current_plan, requested_plan, requested_by)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`, [id, b.id, b.plan || null, plan.name, userId || null]);
+      await client.query(
+        `INSERT INTO platform_events (business_id, type, payload) VALUES ($1, 'plan.requested', $2::jsonb)`,
+        [b.id, JSON.stringify({ requestId: id, requestedPlan: plan.name, currentPlan: b.plan || null, replaced: anterior ? anterior.id : null })]);
+      await client.query('COMMIT');
+      return formatoSolicitud(r.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (error.code === '23505') throw new ErrorPlataforma(409, 'SOLICITUD_EN_CURSO', 'Ya hay una solicitud en curso. Inténtalo de nuevo.');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function cancelarSolicitud(businessId) {
+    const r = await pool.query(
+      `UPDATE plan_requests SET status = 'cancelled', decided_at = NOW()
+       WHERE business_id = $1 AND status = 'pending' RETURNING *`, [businessId]);
+    if (!r.rowCount) throw new ErrorPlataforma(404, 'SIN_SOLICITUD', 'No tienes una solicitud pendiente.');
+    await pool.query(
+      `INSERT INTO platform_events (business_id, type, payload) VALUES ($1, 'plan.request.cancelled', $2::jsonb)`,
+      [businessId, JSON.stringify({ requestId: r.rows[0].id })]);
+    return formatoSolicitud(r.rows[0]);
+  }
+
+  /* Para el Panel Maestro: pendientes y las de los últimos 60 días. */
+  async function listarSolicitudes() {
+    const r = await pool.query(
+      `SELECT p.*, b.name AS business_name FROM plan_requests p JOIN businesses b ON b.id = p.business_id
+       WHERE p.status = 'pending' OR p.created_at > NOW() - interval '60 days'
+       ORDER BY p.created_at DESC LIMIT 500`);
+    return r.rows.map(formatoSolicitud);
+  }
+
+  /*
+    El Panel Maestro resuelve una solicitud. Para aprobarla, antes tiene que
+    haber aplicado la suscripción con el plan pedido (así el plan solo cambia
+    por la vía de siempre, con versiones y las comprobaciones de la fase 8).
+  */
+  async function resolverSolicitud(id, datos = {}) {
+    const estado = String(datos.status || '');
+    if (!['approved', 'rejected'].includes(estado)) throw new ErrorPlataforma(400, 'DATOS_INVALIDOS', 'Estado no válido');
+    const motivo = datos.reason === undefined || datos.reason === null ? null : String(datos.reason).trim().slice(0, 300) || null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const s = (await client.query('SELECT * FROM plan_requests WHERE id = $1 FOR UPDATE', [String(id)])).rows[0];
+      if (!s) throw new ErrorPlataforma(404, 'NO_ENCONTRADO', 'Solicitud no encontrada');
+      if (s.status === estado) { await client.query('ROLLBACK'); return formatoSolicitud(s); }
+      if (s.status !== 'pending') throw new ErrorPlataforma(409, 'YA_RESUELTA', 'Esta solicitud ya no está pendiente.');
+      if (estado === 'approved') {
+        const b = (await client.query('SELECT plan FROM businesses WHERE id = $1', [s.business_id])).rows[0];
+        if (!b || String(b.plan || '').toLowerCase() !== s.requested_plan.toLowerCase()) {
+          throw new ErrorPlataforma(409, 'PLAN_NO_APLICADO', 'Primero aplica la suscripción con el plan pedido.');
+        }
+      }
+      const r = await client.query(
+        `UPDATE plan_requests SET status = $2, reason = $3, decided_at = NOW() WHERE id = $1 RETURNING *`,
+        [s.id, estado, motivo]);
+      await client.query('COMMIT');
+      return formatoSolicitud(r.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   /* Copia del catálogo de planes del Panel Maestro (precios y días de prueba). */
   async function sincronizarPlanes(lista) {
     if (!Array.isArray(lista) || lista.length > 50) throw new ErrorPlataforma(400, 'DATOS_INVALIDOS', 'Lista de planes no válida');
@@ -315,6 +439,7 @@ function crearPlataforma({ pool }) {
 
   return {
     protegerNegocios, suscripcion, limitesDe, listarNegocios, negocio, aplicarSuscripcion,
+    solicitudDe, solicitarPlan, cancelarSolicitud, listarSolicitudes, resolverSolicitud,
     sincronizarPlanes, catalogo, eventosPendientes, confirmarEventos
   };
 }
