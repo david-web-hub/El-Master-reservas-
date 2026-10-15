@@ -8485,6 +8485,13 @@ app.put('/api/admin/business', async (req, res) => {
       email: data.email, address: data.address, description: data.description };
     await writeDb(db);
 
+    /* El nombre también se guarda en la ficha de la barbería: es el que ven el Panel Maestro y la sesión. */
+    if (MODO_ALMACEN === 'postgres') {
+      await pool.query(
+        'UPDATE businesses SET name = $2, updated_at = NOW() WHERE id = $1 AND name IS DISTINCT FROM $2',
+        [negocioActual(), data.name]);
+    }
+
     res.json({ ok: true, business: data });
   } catch (error) {
     console.error('ERROR GUARDANDO NEGOCIO:', error);

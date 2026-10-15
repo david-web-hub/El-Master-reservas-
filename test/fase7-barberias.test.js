@@ -165,6 +165,26 @@ test.describe('Fase 7 · barberías independientes', { skip: omitir }, () => {
     assert.equal(siteB.business.name, nombreBase, 'B no cambió');
   });
 
+  test('cambio de nombre: llega al Panel Maestro y a la sesión, con el mismo id y la misma dirección', async () => {
+    const antes = (await plataforma(s, 'GET', '/api/plataforma/negocios')).json.businesses;
+    const nuevo = 'Barbería de prueba Master Fade ' + unico();
+    const r = await s.pedir('PUT', '/api/admin/business', { name: nuevo }, { cookie: A.cookie });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const despues = (await plataforma(s, 'GET', '/api/plataforma/negocios')).json.businesses;
+    const a = despues.find(b => b.id === A.id);
+    assert.equal(a.name, nuevo, 'el Panel Maestro recibe el nombre nuevo');
+    assert.equal(a.slug, A.slug, 'la dirección no cambia');
+    assert.equal(despues.length, antes.length, 'sin barberías duplicadas');
+    for (const b of antes.filter(x => x.id !== A.id)) {
+      assert.equal(despues.find(x => x.id === b.id).name, b.name, `${b.id} no cambia`);
+    }
+    assert.equal((await plataforma(s, 'GET', `/api/plataforma/negocios/${A.id}`)).json.business.name, nuevo);
+    const sesion = (await s.pedir('GET', '/api/auth/sesion', undefined, { cookie: A.cookie })).json;
+    assert.equal(sesion.business.name, nuevo, 'la sesión también lo usa');
+    assert.equal((await s.pedir('GET', `/b/${A.slug}/api/public/site`, undefined, { cookie: null })).json.business.name, nuevo);
+    A.nombre = nuevo;
+  });
+
   test('Panel Maestro: enlace y estado de WhatsApp de cada barbería, sin datos de clientes ni secretos', async () => {
     const r = await plataforma(s, 'GET', '/api/plataforma/negocios');
     assert.equal(r.status, 200);
@@ -351,6 +371,49 @@ test.describe('Fase 7 · correo y verificación en producción', { skip: omitir 
       await s.detener();
       s.borrar();
       await resend.cerrar();
+    }
+  });
+});
+
+test.describe('Fase 7 · nombres guardados antes de la corrección', { skip: omitir }, () => {
+  test('la migración copia al Panel el nombre que guardó el propietario, sin tocar ids, reservas ni otras barberías', async () => {
+    const { reiniciar } = require('./apoyo/servidor');
+    const pool = crearPool();
+    let s = await iniciarServidor({ postgres: true, env: { PLATAFORMA_CLAVE: CLAVE_PLATAFORMA } });
+    try {
+      const X = await registrar(s, 'bleesd ' + unico(), 'Dueño X');
+      const Y = await registrar(s, 'Otra ' + unico(), 'Dueño Y');
+      const nuevo = 'Barbería de prueba Master Fade ' + unico();
+      assert.equal((await s.pedir('PUT', '/api/admin/business', { name: nuevo }, { cookie: X.cookie })).status, 200);
+      const reserva = await s.pedir('POST', `/b/${X.slug}/api/bookings`,
+        { name: 'Cliente X', phone: '0991231231', barberId: 'barbero-1', serviceIds: ['corte'], date: proximoDia(4), time: '09:00' }, { cookie: null });
+      assert.equal(reserva.status, 201, JSON.stringify(reserva.json));
+      /* Así quedó en producción con la versión anterior: la agenda con el nombre nuevo y la ficha con el original. */
+      await pool.query('UPDATE businesses SET name = $2 WHERE id = $1', [X.id, X.nombre]);
+      assert.equal((await plataforma(s, 'GET', `/api/plataforma/negocios/${X.id}`)).json.business.name, X.nombre);
+      const fichaY = (await pool.query('SELECT * FROM businesses WHERE id = $1', [Y.id])).rows[0];
+      const totales = async () => (await pool.query(
+        `SELECT (SELECT count(*) FROM businesses)::int AS b, (SELECT count(*) FROM users)::int AS u, (SELECT count(*) FROM bookings)::int AS r`)).rows[0];
+      const antes = await totales();
+      const susX = (await pool.query('SELECT status, plan, trial_ends_at, subscription_version, slug FROM businesses WHERE id = $1', [X.id])).rows[0];
+
+      await pool.query(`DELETE FROM master_reservas_migrations WHERE version = '2026-10-fase7-002'`);
+      s = await reiniciar(s);
+      assert.ok(s.logs.some(l => l.includes('MIGRACIÓN APLICADA: 2026-10-fase7-002')));
+
+      assert.equal((await plataforma(s, 'GET', `/api/plataforma/negocios/${X.id}`)).json.business.name, nuevo, 'el Panel recibe el nombre actualizado');
+      assert.deepEqual((await pool.query('SELECT status, plan, trial_ends_at, subscription_version, slug FROM businesses WHERE id = $1', [X.id])).rows[0], susX,
+        'ni la dirección ni la suscripción cambian');
+      const fichaY2 = (await pool.query('SELECT * FROM businesses WHERE id = $1', [Y.id])).rows[0];
+      assert.deepEqual(fichaY2, fichaY, 'otra barbería queda idéntica');
+      assert.deepEqual(await totales(), antes, 'mismas barberías, usuarios y reservas');
+      const login = await s.pedir('POST', '/api/auth/login', { email: X.correo, password: CLAVE }, { cookie: null });
+      assert.equal(login.status, 200, 'la cuenta sigue funcionando');
+      assert.match(JSON.stringify((await s.pedir('GET', '/api/bookings', undefined, { cookie: cookieDe(login) })).json), /Cliente X/);
+    } finally {
+      await s.detener();
+      s.borrar();
+      await pool.end();
     }
   });
 });

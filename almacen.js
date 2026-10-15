@@ -406,6 +406,26 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-fase7-002',
+  descripcion: 'Nombre de cada barbería igual al que guardó su propietario (para el Panel Maestro)',
+  sql: `
+    /*
+      Antes, «Información del negocio» guardaba el nombre solo en la agenda.
+      Copia ese nombre a businesses.name únicamente donde difieren. No cambia
+      ids, direcciones, suscripciones ni ningún otro dato.
+    */
+    UPDATE businesses b
+       SET name = left(btrim(s.data->>'name'), 120), updated_at = NOW()
+      FROM business_state s
+     WHERE s.business_id = b.id
+       AND s.key = 'business'
+       AND coalesce(btrim(s.data->>'name'), '') <> ''
+       AND b.status IN ('active', 'trial', 'past_due', 'expired', 'suspended')
+       AND b.name IS DISTINCT FROM left(btrim(s.data->>'name'), 120);
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
