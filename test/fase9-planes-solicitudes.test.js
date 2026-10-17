@@ -132,7 +132,7 @@ test.describe('Fase 9 · sección Planes y solicitudes de cambio', { skip: omiti
     const b = await registrar(s, 'Individual');
     const r = await solicitar(s, b, 'pro');
     assert.equal(r.status, 201, JSON.stringify(r.json));
-    assert.match(r.json.message, /cuando Master Fade la apruebe/);
+    assert.match(r.json.message, /cuando Master Plus la apruebe/);
     assert.equal(r.json.request.status, 'pending');
     assert.equal(r.json.request.requestedPlan, 'Pro');
     assert.equal(r.json.request.currentPlan, 'Individual');

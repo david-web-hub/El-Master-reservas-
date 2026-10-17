@@ -22,6 +22,19 @@
   - las API protegidas: administración, sincronización firmada con El Máster Reservas, suscripciones y solicitudes de plan;
   - los administradores y los datos del Panel.
 
+## Marca: Master Plus
+- **Llevan «Master Plus»:**
+  - la página pública, el acceso y el registro de las barberías (`Master Plus | Acceso`);
+  - los correos, por ejemplo «Bienvenido a Master Plus: confirma tu correo»;
+  - los avisos del panel de los propietarios: planes, solicitudes, límites y suscripción;
+  - el nombre que aparece en la app de autenticación al activar la verificación en dos pasos (solo en activaciones nuevas; las ya activadas siguen funcionando).
+- **Panel Maestro:** «Master Plus — Administración».
+- **Se conservan:**
+  - **El Máster** como nombre de la barbería principal, su página de reservas y sus páginas de privacidad y eliminación de datos (registradas en Meta para WhatsApp);
+  - los nombres que cada barbería eligió;
+  - las URL, las bases de datos, los identificadores internos y las integraciones.
+- **Remitente de los correos:** el nombre que se ve en «De:» sale de la variable `CORREO_REMITENTE`. Para que diga Master Plus, cambia solo el nombre y conserva la dirección verificada en Resend, por ejemplo `Master Plus <no-responder@TU-DOMINIO-VERIFICADO>`.
+
 ## Recorrido de un visitante
 1. Abre `masterfadeplus.com`, pulsa «Crear mi barbería» y elige un plan.
 2. Llega a `<El Máster Reservas>/acceso.html?plan=<Plan>#registro`, el registro de siempre con el plan ya elegido.

@@ -2347,7 +2347,7 @@ const pages = [
     'planes',
     '◇',
     'Planes',
-    'Tu plan de Master Fade'
+    'Tu plan de Master Plus'
   ]
 
 ];
@@ -7181,7 +7181,7 @@ function renderBarberSettings() {
     <div class="card subscription-notice${lleno ? ' danger' : ''}" id="barberLimit" style="margin:0 0 14px">
       <h3>Barberos activos: ${activos} de ${maximo}</h3>
       <p>${lleno
-        ? `Llegaste al máximo de tu plan ${esc(plan)}. Para agregar o activar otro barbero, cambia a un plan superior con Master Fade, o desactiva uno.`
+        ? `Llegaste al máximo de tu plan ${esc(plan)}. Para agregar o activar otro barbero, cambia a un plan superior con Master Plus, o desactiva uno.`
         : `Tu plan ${esc(plan)} permite hasta ${maximo} ${maximo === 1 ? 'barbero activo' : 'barberos activos'}.`}</p>
     </div>`;
 
@@ -8122,16 +8122,16 @@ function renderSubscriptionNotice() {
   if (sub && !sub.protected) {
     if (sub.status === 'expired') {
       aviso = { danger: true, titulo: 'Tu suscripción venció',
-        texto: 'Tus datos y tus reservas se conservan, pero la barbería no recibe reservas nuevas. Renueva tu plan con Master Fade para volver a recibirlas.' };
+        texto: 'Tus datos y tus reservas se conservan, pero la barbería no recibe reservas nuevas. Renueva tu plan con Master Plus para volver a recibirlas.' };
     } else if (sub.status === 'suspended') {
       aviso = { danger: true, titulo: 'Tu barbería está suspendida',
-        texto: 'Tus datos se conservan. Comunícate con Master Fade para reactivarla.' };
+        texto: 'Tus datos se conservan. Comunícate con Master Plus para reactivarla.' };
     } else if (sub.status === 'past_due') {
       aviso = { titulo: 'Pago pendiente',
-        texto: `Tu plan ${sub.plan || ''} tiene un pago pendiente. Regulariza el pago con Master Fade para seguir recibiendo reservas.` };
+        texto: `Tu plan ${sub.plan || ''} tiene un pago pendiente. Regulariza el pago con Master Plus para seguir recibiendo reservas.` };
     } else if (sub.status === 'trial' && sub.daysLeft !== null && sub.daysLeft <= 3) {
       aviso = { titulo: sub.daysLeft ? `Tu prueba gratuita termina en ${dias(sub.daysLeft)}` : 'Tu prueba gratuita termina hoy',
-        texto: 'Activa tu plan con Master Fade para seguir recibiendo reservas sin interrupciones.' };
+        texto: 'Activa tu plan con Master Plus para seguir recibiendo reservas sin interrupciones.' };
     }
   }
   box.hidden = !aviso;
@@ -8200,9 +8200,9 @@ async function logout() {
   location.replace('/acceso.html');
 }
 
-/* ---------- Planes de Master Fade ----------
+/* ---------- Planes de Master Plus ----------
    Catálogo real (el que publica el Panel Maestro). Cambiar de plan es una
-   solicitud: el plan no cambia hasta que Master Fade la aprueba. */
+   solicitud: el plan no cambia hasta que Master Plus la aprueba. */
 const ESTADO_SUSCRIPCION = { trial: 'Prueba gratuita', active: 'Activa', past_due: 'Pago pendiente', expired: 'Vencida', suspended: 'Suspendida' };
 
 async function loadPlanes() {
@@ -8229,13 +8229,13 @@ function renderPlanes(data) {
   if (sol && sol.status === 'pending') {
     aviso = `<div class="card subscription-notice" id="planRequest" style="margin:0 0 16px">
       <h3>Solicitud pendiente: plan ${esc(sol.requestedPlan)}</h3>
-      <p>Enviada el ${esc(fecha(sol.createdAt))}. Tu plan actual y sus límites siguen igual hasta que Master Fade la apruebe.</p>
+      <p>Enviada el ${esc(fecha(sol.createdAt))}. Tu plan actual y sus límites siguen igual hasta que Master Plus la apruebe.</p>
       <div class="actions"><button class="btn btn-dark" onclick="cancelarSolicitudPlan()">Cancelar solicitud</button></div>
     </div>`;
   } else if (sol && sol.status === 'approved') {
     aviso = `<div class="card subscription-notice" id="planRequest" style="margin:0 0 16px"><h3>Solicitud aprobada</h3><p>Ya tienes el plan ${esc(sol.requestedPlan)}.</p></div>`;
   } else if (sol && sol.status === 'rejected') {
-    aviso = `<div class="card subscription-notice danger" id="planRequest" style="margin:0 0 16px"><h3>Solicitud no aprobada: plan ${esc(sol.requestedPlan)}</h3><p>${esc(sol.reason || 'Comunícate con Master Fade para más información.')}</p></div>`;
+    aviso = `<div class="card subscription-notice danger" id="planRequest" style="margin:0 0 16px"><h3>Solicitud no aprobada: plan ${esc(sol.requestedPlan)}</h3><p>${esc(sol.reason || 'Comunícate con Master Plus para más información.')}</p></div>`;
   }
 
   const pendiente = sol && sol.status === 'pending' ? sol.requestedPlan : null;
@@ -8265,11 +8265,11 @@ function renderPlanes(data) {
     </div>
     ${aviso}
     <div class="plans-grid">${tarjetas || '<div class="empty">No hay planes disponibles en este momento.</div>'}</div>
-    <p class="label" style="margin-top:14px">Los cambios de plan los aprueba Master Fade. Ningún cambio borra tus barberos, reservas, clientes ni tu configuración.</p>`;
+    <p class="label" style="margin-top:14px">Los cambios de plan los aprueba Master Plus. Ningún cambio borra tus barberos, reservas, clientes ni tu configuración.</p>`;
 }
 
 async function solicitarPlan(nombre) {
-  if (!confirm(`¿Solicitar el plan ${nombre}? Tu plan actual se mantiene hasta que Master Fade apruebe el cambio.`)) return;
+  if (!confirm(`¿Solicitar el plan ${nombre}? Tu plan actual se mantiene hasta que Master Plus apruebe el cambio.`)) return;
   try {
     const data = await request('/api/admin/planes/solicitud', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: nombre })
@@ -8332,7 +8332,7 @@ async function renderWhatsAppSettings() {
     return;
   }
   if (!wa.available) {
-    $('settingContent').innerHTML = '<p class="label">La conexión de WhatsApp todavía no está activada en el servidor. Comunícate con Master Fade.</p>';
+    $('settingContent').innerHTML = '<p class="label">La conexión de WhatsApp todavía no está activada en el servidor. Comunícate con Master Plus.</p>';
     return;
   }
   const fecha = v => v ? new Date(v).toLocaleString('es-EC', { dateStyle: 'medium', timeStyle: 'short' }) : '';

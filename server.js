@@ -8587,7 +8587,7 @@ app.post('/api/admin/planes/solicitud', async (req, res) => {
   try {
     const solicitud = await plataforma.solicitarPlan(negocioActual(), req.body?.plan, { userId: req.sesion?.usuario?.id });
     console.log(`PLANES: ${negocioActual()} solicita el plan ${solicitud.requestedPlan} (pendiente de aprobación)`);
-    res.status(201).json({ ...(await datosPlanes()), message: 'Solicitud enviada. Tu plan cambiará cuando Master Fade la apruebe.' });
+    res.status(201).json({ ...(await datosPlanes()), message: 'Solicitud enviada. Tu plan cambiará cuando Master Plus la apruebe.' });
   } catch (error) {
     responderErrorPlataforma(res, error, 'SOLICITUD DE PLAN');
   }
@@ -8682,7 +8682,7 @@ async function rechazoPorLimite(db, excluirId) {
     ok: false,
     code: 'LIMITE_BARBEROS',
     error: `Tu plan ${limites.plan} permite ${n} ${n === 1 ? 'barbero activo' : 'barberos activos'} y ya ${activos === 1 ? 'tienes 1' : 'tienes ' + activos}. ` +
-      'Para agregar o activar otro, cambia a un plan superior con Master Fade, o desactiva un barbero.',
+      'Para agregar o activar otro, cambia a un plan superior con Master Plus, o desactiva un barbero.',
     limits: { plan: limites.plan, maxBarbers: n, activeBarbers: activos }
   };
 }

@@ -220,7 +220,7 @@ function crearAutenticacion({
   verificarCorreo = true,
   /* Clave de 32 bytes para cifrar los secretos de dos pasos; sin ella, la función no está disponible. */
   claveDosPasos = null,
-  nombreServicio = 'Master Reservas',
+  nombreServicio = 'Master Plus',
   /* Catálogo de planes del Panel Maestro (nombre, días de prueba); vacío si aún no se sincronizó. */
   catalogoPlanes = async () => [],
   /* Días de prueba si el catálogo todavía no llegó (el del Panel Maestro: 7). */
