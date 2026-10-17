@@ -13,6 +13,15 @@
 - En el dominio principal, cualquier otra dirección, como `/acceso.html`, `/admin.html` o `/b/...`, redirige a la misma ruta en `PUBLIC_BASE_URL`. Así nunca se sirve nada privado desde `masterfadeplus.com`.
 - Si `PUBLIC_BASE_URL` usa el mismo dominio que el sitio público, el sitio **no se activa** y se avisa en el registro del servidor. Así no reemplaza la página de reservas de El Máster.
 
+## Panel Maestro: sin partes públicas
+- `/registro` del Panel está **cerrado**. Responde 404, o redirige (301) a `SITIO_PUBLICO_URL` si se define en el Panel, por ejemplo `https://masterfadeplus.com`. Así los enlaces antiguos llevan a la página pública.
+- `/api/public/registro` **ya no existe**.
+- `/api/plans`, el catálogo interno con versiones y descripciones, exige **sesión de administrador** o `ADMIN_API_KEY`. El público ve los planes en masterfadeplus.com, que los recibe de El Máster Reservas.
+- La pantalla de acceso ya no enlaza a «Crear mi cuenta». Integraciones explica que el registro está en la página pública.
+- **Sin cambios:**
+  - las API protegidas: administración, sincronización firmada con El Máster Reservas, suscripciones y solicitudes de plan;
+  - los administradores y los datos del Panel.
+
 ## Recorrido de un visitante
 1. Abre `masterfadeplus.com`, pulsa «Crear mi barbería» y elige un plan.
 2. Llega a `<El Máster Reservas>/acceso.html?plan=<Plan>#registro`, el registro de siempre con el plan ya elegido.
@@ -64,7 +73,7 @@ Si más adelante se da a El Máster Reservas un subdominio propio, se agrega com
 3. **Variables:** en **Environment**, define `SITIO_PUBLICO_DOMINIO` y `SITIO_CONTACTO_EMAIL`. **No cambies `PUBLIC_BASE_URL`.** Guarda **sin desplegar todavía** (Save only).
 4. **Despliegue:** **Manual Deploy → Deploy latest commit** de El Máster Reservas. Después, el del Panel Maestro.
 5. **Registro:** cuando el correo de Resend esté verificado, `REGISTRO_ABIERTO=1` abre el registro. Mientras no lo esté, la página muestra «Muy pronto».
-6. **Panel Maestro:** no se toca. Sigue en `app.masterfadeplus.com`, con su servicio, su base de datos y sus administradores. Su `RESERVAS_URL` tampoco cambia.
+6. **Panel Maestro:** sigue en `app.masterfadeplus.com`, con su servicio, su base de datos y sus administradores. Su `RESERVAS_URL` no cambia. Opcional: `SITIO_PUBLICO_URL=https://masterfadeplus.com`, para que los enlaces antiguos a `/registro` lleven a la página pública.
 
 ## DNS (en el registrador del dominio o en Cloudflare)
 
