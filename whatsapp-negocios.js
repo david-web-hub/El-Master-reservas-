@@ -83,7 +83,7 @@ function crearWhatsAppNegocios({
   function exigirDisponible() {
     if (!disponible) {
       throw new ErrorWhatsApp(503, 'WHATSAPP_NO_DISPONIBLE',
-        'La conexión de WhatsApp todavía no está activada en el servidor. Comunícate con Master Fade.');
+        'La conexión de WhatsApp todavía no está activada en el servidor. Comunícate con Master Plus.');
     }
   }
 

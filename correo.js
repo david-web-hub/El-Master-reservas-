@@ -50,7 +50,7 @@ function marco({ titulo, saludo, parrafos, boton, enlace, nota, preencabezado })
         <table role="presentation" cellpadding="0" cellspacing="0"><tr>
           <td style="width:44px;height:44px;border-radius:13px;background:${COLORES.oro2};background-image:linear-gradient(145deg,${COLORES.oro2},#c99b22);text-align:center;vertical-align:middle;font-size:22px;color:#090909;">&#9819;</td>
           <td style="padding-left:12px;font-family:${fuente};">
-            <div style="color:${COLORES.texto};font-weight:800;letter-spacing:.08em;font-size:15px;">MASTER RESERVAS</div>
+            <div style="color:${COLORES.texto};font-weight:800;letter-spacing:.08em;font-size:15px;">MASTER PLUS</div>
             <div style="color:${COLORES.apagado};font-size:13px;">Administración de tu barbería</div>
           </td>
         </tr></table>
@@ -69,7 +69,7 @@ function marco({ titulo, saludo, parrafos, boton, enlace, nota, preencabezado })
         <p style="margin:0;padding-top:14px;border-top:1px solid ${COLORES.borde};color:${COLORES.apagado};font-size:12px;line-height:1.5;">${esc(nota)}</p>
       </td></tr>
       <tr><td style="padding:18px 4px 0;font-family:${fuente};color:${COLORES.apagado};font-size:12px;line-height:1.5;text-align:center;">
-        Mensaje automático de Master Reservas. No compartas este enlace con nadie.
+        Mensaje automático de Master Plus. No compartas este enlace con nadie.
       </td></tr>
     </table>
   </td></tr>
@@ -81,16 +81,16 @@ function marco({ titulo, saludo, parrafos, boton, enlace, nota, preencabezado })
 
 const PLANTILLAS = {
   confirmacion: d => ({
-    asunto: 'Confirma tu correo en Master Reservas',
-    titulo: 'Confirma tu correo',
+    asunto: 'Bienvenido a Master Plus: confirma tu correo',
+    titulo: 'Bienvenido a Master Plus',
     saludo: `Hola${d.nombre ? ' ' + d.nombre : ''}:`,
-    parrafos: [`Gracias por registrar <strong style="color:${COLORES.texto};">${esc(d.negocio || 'tu barbería')}</strong>. Confirma tu correo para activar la cuenta.`],
+    parrafos: [`Gracias por registrar <strong style="color:${COLORES.texto};">${esc(d.negocio || 'tu barbería')}</strong> en Master Plus. Confirma tu correo para activar la cuenta y empezar a recibir reservas.`],
     boton: 'Confirmar mi correo',
     nota: `El enlace vence en ${d.vence || '24 horas'} y sirve una sola vez. Si no creaste esta cuenta, ignora este mensaje.`,
-    texto: `Hola${d.nombre ? ' ' + d.nombre : ''}:\n\nConfirma tu correo para activar tu cuenta de Master Reservas:\n${d.enlace}\n\nEl enlace vence en ${d.vence || '24 horas'} y sirve una sola vez. Si no creaste esta cuenta, ignora este mensaje.`
+    texto: `Hola${d.nombre ? ' ' + d.nombre : ''}:\n\nConfirma tu correo para activar tu cuenta de Master Plus:\n${d.enlace}\n\nEl enlace vence en ${d.vence || '24 horas'} y sirve una sola vez. Si no creaste esta cuenta, ignora este mensaje.`
   }),
   recuperacion: d => ({
-    asunto: 'Restablece tu contraseña de Master Reservas',
+    asunto: 'Restablece tu contraseña de Master Plus',
     titulo: 'Crea una nueva contraseña',
     saludo: `Hola${d.nombre ? ' ' + d.nombre : ''}:`,
     parrafos: ['Recibimos una solicitud para cambiar la contraseña de tu cuenta. Al crear la nueva, se cerrarán las sesiones abiertas.'],
@@ -99,7 +99,7 @@ const PLANTILLAS = {
     texto: `Hola${d.nombre ? ' ' + d.nombre : ''}:\n\nPara crear una nueva contraseña abre este enlace:\n${d.enlace}\n\nVence en ${d.vence || '1 hora'} y sirve una sola vez. Si no lo pediste, ignora este mensaje: tu contraseña no cambia.`
   }),
   invitacion: d => ({
-    asunto: `Invitación a ${d.negocio || 'una barbería'} en Master Reservas`,
+    asunto: `Invitación a ${d.negocio || 'una barbería'} en Master Plus`,
     titulo: `Te invitaron a ${d.negocio || 'una barbería'}`,
     saludo: `Hola${d.nombre ? ' ' + d.nombre : ''}:`,
     parrafos: [
@@ -110,16 +110,16 @@ const PLANTILLAS = {
     ],
     boton: 'Ver invitación',
     nota: `La invitación vence en ${d.vence || '7 días'} y sirve una sola vez. Si no esperabas este mensaje, puedes rechazarla o ignorarlo.`,
-    texto: `Hola${d.nombre ? ' ' + d.nombre : ''}:\n\n${d.invitante || 'El equipo'} te invitó a unirte a ${d.negocio || 'su barbería'} como ${d.rol || 'miembro del equipo'} en Master Reservas.\n\nAbre este enlace para aceptarla o rechazarla:\n${d.enlace}\n\nVence en ${d.vence || '7 días'} y sirve una sola vez.`
+    texto: `Hola${d.nombre ? ' ' + d.nombre : ''}:\n\n${d.invitante || 'El equipo'} te invitó a unirte a ${d.negocio || 'su barbería'} como ${d.rol || 'miembro del equipo'} en Master Plus.\n\nAbre este enlace para aceptarla o rechazarla:\n${d.enlace}\n\nVence en ${d.vence || '7 días'} y sirve una sola vez.`
   }),
   prueba: d => ({
-    asunto: 'Prueba de correo de Master Reservas',
+    asunto: 'Prueba de correo de Master Plus',
     titulo: 'El correo funciona',
     saludo: 'Hola:',
-    parrafos: ['Este es un mensaje de prueba para comprobar la configuración de correo de Master Reservas.'],
-    boton: 'Abrir Master Reservas',
+    parrafos: ['Este es un mensaje de prueba para comprobar la configuración de correo de Master Plus.'],
+    boton: 'Abrir Master Plus',
     nota: 'Si recibiste este mensaje, el envío de correos está configurado correctamente.',
-    texto: `Este es un mensaje de prueba de Master Reservas.\n${d.enlace}`
+    texto: `Este es un mensaje de prueba de Master Plus.\n${d.enlace}`
   })
 };
 
