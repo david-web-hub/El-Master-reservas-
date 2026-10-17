@@ -3,5 +3,10 @@
     "patron": "^(escritorio|movil)-panel-configuracion\\.png$",
     "completo": true,
     "motivo": "Fase 7: dos tarjetas nuevas en Configuración («Tu página de reservas» y «WhatsApp y Elia»)"
+  },
+  {
+    "patron": "^(escritorio|movil)-acceso-[a-z]+\\.png$",
+    "completo": true,
+    "motivo": "Marca Master Plus: el acceso y el registro dicen «MASTER PLUS» en lugar de «MASTER RESERVAS»"
   }
 ]
