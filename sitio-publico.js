@@ -3,8 +3,11 @@
   SITIO PÚBLICO DE MASTER PLUS (lanzamiento).
   - Se sirve desde este mismo servicio cuando la petición llega por el dominio
     principal (SITIO_PUBLICO_DOMINIO, por ejemplo masterfadeplus.com, y su www).
-  - La aplicación (acceso, paneles, páginas de reservas, API) sigue en
-    PUBLIC_BASE_URL (por ejemplo https://app.masterfadeplus.com), sin cambios.
+  - La aplicación de las barberías (acceso, panel de cada propietario, páginas
+    de reservas, API) sigue en PUBLIC_BASE_URL, sin cambios.
+  - app.<dominio> es el Panel Maestro (privado, otro servicio): el sitio nunca
+    enlaza ni redirige allí; si PUBLIC_BASE_URL apuntara a esa dirección, el
+    sitio no se activa.
   - Los planes salen del catálogo real (el que administra el Panel Maestro).
   - Nunca enlaza al Panel Maestro ni muestra datos de ninguna barbería.
 */
@@ -108,7 +111,10 @@ function crearSitioPublico({ dominio, appUrl, catalogo, registroAbierto, contact
   if (!principal) motivo = 'SITIO_PUBLICO_DOMINIO no está definido';
   else if (!base || !hostApp) motivo = 'PUBLIC_BASE_URL no está definido: el sitio no sabría a dónde enviar a los visitantes';
   else if (hostApp.replace(/:\d+$/, '').replace(/^www\./, '') === principal) {
-    motivo = `PUBLIC_BASE_URL (${hostApp}) usa el mismo dominio que el sitio público; la aplicación debe estar en un subdominio (por ejemplo app.${principal})`;
+    motivo = `PUBLIC_BASE_URL (${hostApp}) usa el mismo dominio que el sitio público; la aplicación de las barberías debe estar en otra dirección`;
+  } else if (hostApp.replace(/:\d+$/, '') === 'app.' + principal) {
+    /* app.<dominio> es el Panel Maestro (privado): el sitio público nunca envía visitantes allí. */
+    motivo = `PUBLIC_BASE_URL (${hostApp}) es la dirección del Panel Maestro; el sitio público solo puede enlazar a la aplicación de las barberías`;
   }
   const activo = !motivo;
   if (dominio && motivo) registro.error('SITIO PÚBLICO DESACTIVADO:', motivo);

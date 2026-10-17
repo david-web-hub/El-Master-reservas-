@@ -2,7 +2,7 @@
 /*
   Lanzamiento público de Master Plus.
   - masterfadeplus.com (SITIO_PUBLICO_DOMINIO) muestra la página pública con los planes del catálogo real;
-    la aplicación sigue en PUBLIC_BASE_URL (app.masterfadeplus.com) sin cambios.
+    la aplicación de las barberías sigue en PUBLIC_BASE_URL sin cambios; nunca se enlaza al Panel Maestro (app.masterfadeplus.com).
   - Buscadores: el sitio se indexa; el acceso, los paneles y la API no.
   - Recorrido de un visitante en un navegador real (teléfono y computadora):
     página → plan → registro → confirmación → configuración → enlace de reservas → una reserva.
@@ -21,7 +21,8 @@ const omitir = URL_PG ? false : 'Define TEST_DATABASE_URL con una base de prueba
 const CLAVE_PLATAFORMA = 'clave-de-plataforma-solo-para-pruebas-0123456789';
 const CLAVE = 'Una-clave-bastante-segura-7';
 const SITIO = 'masterfadeplus.com';
-const APP = 'app.masterfadeplus.com';
+/* La aplicación de las barberías (El Máster Reservas). app.masterfadeplus.com es el Panel Maestro privado. */
+const APP = 'reservas.masterfadeplus.com';
 const unico = () => Math.random().toString(36).slice(2, 10);
 const CATALOGO = [
   { name: 'Individual', price: 10.99, trialDays: 7, active: true, maxBarbers: 1 },
@@ -304,10 +305,25 @@ test.describe('Lanzamiento público de Master Plus', { skip: omitir }, () => {
     assert.equal(pedir.json.subscription.plan, 'Pro');
   });
 
+  test('el sitio nunca enlaza al Panel Maestro: con PUBLIC_BASE_URL en app.<dominio> no se activa', async () => {
+    const html = (await enHost(s, SITIO, '/')).texto + (await enHost(s, SITIO, '/privacidad')).texto + (await enHost(s, SITIO, '/condiciones')).texto;
+    assert.ok(!html.includes('app.masterfadeplus.com'), 'ningún enlace al Panel Maestro');
+    const panel = await iniciarServidor({ postgres: true, env: { SITIO_PUBLICO_DOMINIO: SITIO, PUBLIC_BASE_URL: 'https://app.masterfadeplus.com' } });
+    try {
+      assert.ok(panel.logs.some(l => /SITIO PÚBLICO DESACTIVADO: .*Panel Maestro/.test(l)));
+      const r = await enHost(panel, SITIO, '/admin.html');
+      assert.notEqual(r.headers.location, 'https://app.masterfadeplus.com/admin.html', 'no redirige al Panel Maestro');
+      assert.doesNotMatch((await enHost(panel, SITIO, '/')).texto, /app\.masterfadeplus\.com/);
+    } finally {
+      await panel.detener();
+      panel.borrar();
+    }
+  });
+
   test('sin SITIO_PUBLICO_DOMINIO o con la aplicación en el mismo dominio, el sitio no se activa', async () => {
     const mal = await iniciarServidor({ postgres: true, env: { SITIO_PUBLICO_DOMINIO: SITIO, PUBLIC_BASE_URL: `https://${SITIO}` } });
     try {
-      assert.ok(mal.logs.some(l => /SITIO PÚBLICO DESACTIVADO: .*subdominio/.test(l)));
+      assert.ok(mal.logs.some(l => /SITIO PÚBLICO DESACTIVADO: .*mismo dominio/.test(l)));
       const r = await enHost(mal, SITIO, '/');
       assert.doesNotMatch(r.texto, /Master Plus \| Reservas en línea/, 'no reemplaza la página de reservas');
     } finally {
