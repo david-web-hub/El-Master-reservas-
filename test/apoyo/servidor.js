@@ -57,7 +57,7 @@ function prepararCarpeta(db) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'master-reservas-prueba-'));
   fs.copyFileSync(path.join(RAIZ, 'server.js'), path.join(dir, 'server.js'));
   /* Módulos propios de la aplicación (pueden no existir en versiones anteriores). */
-  for (const extra of ['almacen.js', 'autenticacion.js', 'correo.js', 'plataforma.js', 'firma-plataforma.js', 'despliegue-inicial.js', 'negocios-publicos.js', 'whatsapp-negocios.js']) {
+  for (const extra of ['almacen.js', 'autenticacion.js', 'correo.js', 'plataforma.js', 'firma-plataforma.js', 'despliegue-inicial.js', 'negocios-publicos.js', 'whatsapp-negocios.js', 'sitio-publico.js']) {
     if (fs.existsSync(path.join(RAIZ, extra))) fs.copyFileSync(path.join(RAIZ, extra), path.join(dir, extra));
   }
   fs.cpSync(path.join(RAIZ, 'public'), path.join(dir, 'public'), { recursive: true });
@@ -164,6 +164,8 @@ class Servidor {
       env.PGCONNECT_TIMEOUT = '1';
     }
     Object.assign(env, this.envExtra);
+    /* {PUERTO} en una variable (por ejemplo PUBLIC_BASE_URL) se cambia por el puerto elegido. */
+    for (const k of Object.keys(env)) if (typeof env[k] === 'string') env[k] = env[k].replace(/\{PUERTO\}/g, String(port));
     this.proc = spawn(process.execPath, ['server.js'], { cwd: this.dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const recoger = chunk => {
       for (const linea of String(chunk).split('\n')) if (linea.trim()) this.logs.push(linea);

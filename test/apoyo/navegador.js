@@ -10,10 +10,10 @@ function cargarPlaywright() {
   return null;
 }
 
-async function abrirNavegador() {
+async function abrirNavegador(extra = {}) {
   const pw = cargarPlaywright();
   if (!pw) return null;
-  const opciones = {};
+  const opciones = { ...extra };
   const exe = process.env.CHROMIUM_PATH || (fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : null);
   if (exe && fs.statSync(exe).isFile()) opciones.executablePath = exe;
   try {

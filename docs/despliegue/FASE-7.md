@@ -86,11 +86,11 @@ Las demás variables no cambian: `DATABASE_URL`, `PUBLIC_BASE_URL`, `PLATAFORMA_
    - **Panel Maestro → Integraciones:** El Máster Reservas «Conectado», Correo «Configuradas» y WhatsApp por barbería «Activada». Pulsa **Enviar prueba** y comprueba que el correo llega.
 6. **Ensayo real del registro:**
    - añade `REGISTRO_ABIERTO=1` en El Máster Reservas con **Save only** y pulsa **Manual Deploy → Restart service** (no hace falta compilar de nuevo);
-   - en una ventana de incógnito, abre `https://<Panel Maestro>/registro` y registra una barbería de prueba con **otro correo tuyo**;
+   - en una ventana de incógnito, abre `https://masterfadeplus.com` (página pública de Master Plus; el Panel Maestro ya no tiene `/registro`) y registra una barbería de prueba con **otro correo tuyo**;
    - confirma el correo, entra y abre **Configuración → Tu página de reservas**;
    - haz una reserva desde tu teléfono con ese enlace: debe aparecer en esa barbería y, como cifra, en el Panel Maestro;
    - termina suspendiendo esa barbería de prueba desde el Panel Maestro → Suscripciones.
-7. **Listo para barberías reales:** comparte `https://<Panel Maestro>/registro`.
+7. **Listo para barberías reales:** comparte `https://masterfadeplus.com` (ver `docs/lanzamiento/LANZAMIENTO.md`).
 
 **Si algo falla:**
 - **Render → Events → Rollback** del servicio afectado. Las migraciones solo añaden una tabla y dos columnas, y la versión anterior arranca sobre la base actualizada con todos los datos (ensayado).

@@ -158,6 +158,20 @@ app.set(
 );
 
 /* =========================================================
+   SITIO PÚBLICO (masterfadeplus.com)
+   Solo responde en SITIO_PUBLICO_DOMINIO y su www; en cualquier
+   otro dominio (la aplicación) no hace nada.
+   ========================================================= */
+const sitioPublico = require('./sitio-publico').crearSitioPublico({
+  dominio: process.env.SITIO_PUBLICO_DOMINIO,
+  appUrl: process.env.PUBLIC_BASE_URL,
+  catalogo: async () => (plataforma ? plataforma.catalogo() : []),
+  registroAbierto: () => Boolean(autenticacion) && registroAbierto(),
+  contacto: { email: process.env.SITIO_CONTACTO_EMAIL, whatsapp: process.env.SITIO_CONTACTO_WHATSAPP }
+});
+app.use(sitioPublico.middleware);
+
+/* =========================================================
    PÁGINA PÚBLICA DE CADA BARBERÍA: /b/<dirección>/
    La página y sus llamadas públicas (información, imágenes,
    disponibilidad y reservas) llevan delante /b/<dirección>.
@@ -373,6 +387,14 @@ function origenPermitido(req) {
 
 }
 
+
+/* Buscadores en la aplicación: las páginas de reservas se pueden indexar; el acceso, los paneles y la API no. */
+const PRIVADAS_SIN_INDEXAR = new Set(['/admin', '/admin.html', '/acceso.html', '/salir.html']);
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').set('Cache-Control', 'public, max-age=3600')
+    .send('User-agent: *\nDisallow: /api/\nAllow: /\n');
+});
+
 app.use(
   async (req, res, next) => {
 
@@ -381,6 +403,10 @@ app.use(
       'X-Frame-Options': 'SAMEORIGIN',
       'Referrer-Policy': 'strict-origin-when-cross-origin'
     });
+
+    if (PRIVADAS_SIN_INDEXAR.has(req.path) || req.path.startsWith('/api/') || req.path.startsWith('/webhooks/')) {
+      res.set('X-Robots-Tag', 'noindex, nofollow');
+    }
 
     if (cookieSegura(req)) {
       res.set('Strict-Transport-Security', 'max-age=15552000');
