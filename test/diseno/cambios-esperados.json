@@ -7,6 +7,6 @@
   {
     "patron": "^(escritorio|movil)-acceso-[a-z]+\\.png$",
     "completo": true,
-    "motivo": "Marca Master Plus: el acceso y el registro dicen «MASTER PLUS» en lugar de «MASTER RESERVAS»"
+    "motivo": "Marca MF Plux en el acceso y el registro; «Crear cuenta» empieza eligiendo Barbería o Salón de belleza"
   }
 ]

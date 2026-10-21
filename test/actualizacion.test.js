@@ -101,6 +101,8 @@ async function huella(pool) {
       const f = { ...r.f };
       /* Marcas de uso que cambian solas (sesiones, última visita). */
       delete f.last_login_at; delete f.updated_at; delete f.last_seen_at;
+      /* Columna nueva de MF Plux (tipo de negocio): debe quedar vacía en los negocios existentes. Si tuviera un valor, la huella cambia. */
+      if (f.business_type === null) delete f.business_type;
       return JSON.stringify(f, Object.keys(f).sort());
     }).sort();
     partes.push(t + ':' + crypto.createHash('sha256').update(filas.join('\n')).digest('hex'));
