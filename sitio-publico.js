@@ -1,20 +1,21 @@
 'use strict';
 /*
-  SITIO PÚBLICO DE MASTER PLUS (lanzamiento).
+  SITIO PÚBLICO DE MF PLUX (lanzamiento).
   - Se sirve desde este mismo servicio cuando la petición llega por el dominio
-    principal (SITIO_PUBLICO_DOMINIO, por ejemplo masterfadeplus.com, y su www).
-  - La aplicación de las barberías (acceso, panel de cada propietario, páginas
+    principal (SITIO_PUBLICO_DOMINIO, por ejemplo mfplux.com, y su www).
+  - La aplicación de los negocios (acceso, panel de cada propietario, páginas
     de reservas, API) sigue en PUBLIC_BASE_URL, sin cambios.
   - app.<dominio> es el Panel Maestro (privado, otro servicio): el sitio nunca
     enlaza ni redirige allí; si PUBLIC_BASE_URL apuntara a esa dirección, el
     sitio no se activa.
   - Los planes salen del catálogo real (el que administra el Panel Maestro).
-  - Nunca enlaza al Panel Maestro ni muestra datos de ninguna barbería.
+  - Nunca enlaza al Panel Maestro ni muestra datos de ningún negocio.
+  - Barberías y salones de belleza usan la misma aplicación, planes y precios.
 */
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const precio = n => `$${Number(n).toFixed(2)}`;
-const MARCA = 'Master Plus';
+const MARCA = 'MF Plux';
 
 function normalizarDominio(v) {
   return String(v || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '').replace(/^www\./, '');
@@ -26,19 +27,20 @@ function hostDe(req) {
 
 /* Funciones que ya funcionan. WhatsApp/Elia, videos y pagos en línea no se anuncian todavía. */
 const FUNCIONES = [
-  ['Tu página de reservas', 'Un enlace propio para compartir: tus clientes eligen barbero, servicio, día y hora desde el teléfono, sin llamadas.'],
+  ['Tu página de reservas', 'Un enlace propio para compartir: tus clientes eligen profesional, servicio, día y hora desde el teléfono, sin llamadas.'],
   ['Agenda en orden', 'Todas las reservas en un solo lugar, sin horarios duplicados ni citas que se crucen.'],
-  ['Barberos y horarios', 'Cada barbero con sus días y horas de trabajo. Activa o desactiva barberos cuando lo necesites.'],
+  ['Equipo y horarios', 'Cada barbero o profesional con sus días y horas de trabajo. Actívalos o desactívalos cuando lo necesites.'],
   ['Servicios y precios', 'Tu lista de servicios con su duración y precio, siempre actualizada en tu página.'],
   ['Caja y productos', 'Registra cobros y ventas del día y lleva el control de los productos que vendes.'],
   ['Clientes e informes', 'Conoce a tus clientes y revisa cómo va tu negocio con informes claros.'],
-  ['Tu equipo, con permisos', 'Invita a administradores, recepción y barberos; cada uno ve solo lo que le corresponde.'],
-  ['Datos separados y seguros', 'Cada barbería accede únicamente a su información. Contraseñas cifradas y conexión segura.']
+  ['Tu equipo, con permisos', 'Invita a administradores, recepción y profesionales; cada uno ve solo lo que le corresponde.'],
+  ['Datos separados y seguros', 'Cada negocio accede únicamente a su información. Contraseñas cifradas y conexión segura.']
 ];
 
 const PREGUNTAS = [
-  ['¿Necesito tarjeta para empezar?', 'No. Creas tu barbería y empiezas tu prueba gratuita sin ingresar ningún medio de pago.'],
-  ['¿Qué pasa cuando termina la prueba?', 'Tus datos, barberos y reservas se conservan. Para seguir recibiendo reservas nuevas, nuestro equipo activa tu plan contigo; no hay cobros automáticos.'],
+  ['¿Necesito tarjeta para empezar?', 'No. Creas tu cuenta y empiezas tu prueba gratuita sin ingresar ningún medio de pago.'],
+  ['¿Sirve para salones de belleza?', 'Sí. Al crear tu cuenta eliges si tienes una barbería o un salón de belleza. Los dos usan la misma aplicación, con los mismos planes, precios y funciones.'],
+  ['¿Qué pasa cuando termina la prueba?', 'Tus datos, tu equipo y tus reservas se conservan. Para seguir recibiendo reservas nuevas, nuestro equipo activa tu plan contigo; no hay cobros automáticos.'],
   ['¿Puedo cambiar de plan?', 'Sí. Desde la sección Planes de tu panel solicitas el cambio y nuestro equipo lo confirma. Nunca se borra nada al cambiar.'],
   ['¿Funciona en el celular?', 'Sí. Tanto tu página de reservas como tu panel de administración están pensados para usarse desde el teléfono o la computadora.']
 ];
@@ -177,7 +179,7 @@ ${extraHead}
     <a class="op" href="/#funciones">Funciones</a>
     <a class="op" href="/#planes">Planes</a>
     <a href="${esc(enlaceAcceso)}" id="iniciarSesion">Iniciar sesión</a>
-    <a class="btn small" href="/#planes">Crear mi barbería</a>
+    <a class="btn small" href="/#planes">Crear mi cuenta</a>
   </nav>
 </div></header>
 <main>${cuerpo}</main>
@@ -191,7 +193,7 @@ ${pie()}
     const abierto = registroAbierto();
     const dias = [...new Set(planes.map(p => p.trialDays).filter(d => d > 0))];
     const textoPrueba = dias.length === 1 ? `${dias[0]} días de prueba gratis` : dias.length ? 'Prueba gratis' : '';
-    const barberos = n => n == null ? 'Barberos sin límite' : n === 1 ? '1 barbero' : `Hasta ${n} barberos`;
+    const barberos = n => n == null ? 'Profesionales sin límite' : n === 1 ? '1 barbero o profesional' : `Hasta ${n} barberos o profesionales`;
 
     const tarjetas = planes.map((p, i) => `
       <article class="card plan${i === 1 && planes.length > 2 ? ' destacado' : ''}" data-plan="${esc(p.name)}">
@@ -204,11 +206,11 @@ ${pie()}
           <li>Agenda, caja, clientes e informes</li>
         </ul>
         ${abierto
-          ? `<a class="btn" href="${esc(enlaceRegistro(p.name))}">Crear mi barbería</a>`
+          ? `<a class="btn" href="${esc(enlaceRegistro(p.name))}">Crear mi cuenta</a>`
           : '<span class="btn ghost" aria-disabled="true">Muy pronto</span>'}
       </article>`).join('');
 
-    const descripcion = `${MARCA} es la plataforma de reservas en línea y administración para barberías: página de reservas propia, agenda, barberos, caja y clientes.${textoPrueba ? ' ' + textoPrueba + ', sin tarjeta.' : ''}`;
+    const descripcion = `${MARCA} es la plataforma de reservas en línea y administración para barberías y salones de belleza: página de reservas propia, agenda, equipo, caja y clientes.${textoPrueba ? ' ' + textoPrueba + ', sin tarjeta.' : ''}`;
     const datos = {
       '@context': 'https://schema.org',
       '@type': 'SoftwareApplication',
@@ -222,27 +224,27 @@ ${pie()}
 
     const cuerpo = `
 <section class="hero" style="border-top:0"><div class="wrap">
-  <h1>Las reservas de tu barbería, <em>simples y en orden.</em></h1>
-  <p>${MARCA} le da a tu barbería una página de reservas propia y un panel para administrar agenda, barberos, servicios, caja y clientes. Desde el celular o la computadora.</p>
+  <h1>Las reservas de tu barbería o salón, <em>simples y en orden.</em></h1>
+  <p>${MARCA} le da a tu barbería o salón de belleza una página de reservas propia y un panel para administrar agenda, equipo, servicios, caja y clientes. Desde el celular o la computadora.</p>
   <div class="cta">
-    ${abierto ? '<a class="btn" href="#planes" id="crearBarberia">Crear mi barbería</a>' : '<a class="btn" href="#planes" id="crearBarberia">Ver planes</a>'}
+    ${abierto ? '<a class="btn" href="#planes" id="crearBarberia">Crear mi cuenta</a>' : '<a class="btn" href="#planes" id="crearBarberia">Ver planes</a>'}
     <a class="btn ghost" href="${esc(enlaceAcceso)}">Iniciar sesión</a>
   </div>
-  <p class="nota">${abierto ? `${textoPrueba ? esc(textoPrueba) + ' · ' : ''}Sin tarjeta · Sin cobros automáticos` : 'El registro de nuevas barberías abrirá muy pronto.'}</p>
+  <p class="nota">${abierto ? `${textoPrueba ? esc(textoPrueba) + ' · ' : ''}Sin tarjeta · Sin cobros automáticos` : 'El registro de nuevos negocios abrirá muy pronto.'}</p>
 </div></section>
 
 <section><div class="wrap">
   <h2>Empieza en minutos</h2>
-  <p class="lead">Sin instalar nada. Creas tu cuenta, configuras tu barbería y compartes tu enlace.</p>
+  <p class="lead">Sin instalar nada. Creas tu cuenta, configuras tu negocio y compartes tu enlace.</p>
   <div class="grid g3">
-    <div class="card paso"><b>1</b><h3>Crea tu barbería</h3><p>Elige tu plan, escribe el nombre de tu barbería y confirma tu correo.</p></div>
-    <div class="card paso"><b>2</b><h3>Configúrala</h3><p>Agrega tus servicios, precios, barberos y horarios de atención.</p></div>
+    <div class="card paso"><b>1</b><h3>Crea tu cuenta</h3><p>Elige si tienes una barbería o un salón de belleza, tu plan y el nombre de tu negocio, y confirma tu correo.</p></div>
+    <div class="card paso"><b>2</b><h3>Configúralo</h3><p>Agrega tus servicios, precios, tu equipo y tus horarios de atención.</p></div>
     <div class="card paso"><b>3</b><h3>Comparte tu enlace</h3><p>Tus clientes reservan solos en tu página; tú ves cada cita en tu agenda.</p></div>
   </div>
 </div></section>
 
 <section id="funciones"><div class="wrap">
-  <h2>Todo lo que tu barbería necesita</h2>
+  <h2>Todo lo que tu negocio necesita</h2>
   <p class="lead">Reservas en línea y administración del día a día en una sola plataforma.</p>
   <div class="grid g4">${FUNCIONES.map(([t, d]) => `<div class="card"><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div>
 </div></section>
@@ -260,7 +262,7 @@ ${pie()}
 </div></section>`;
 
     return documento({
-      titulo: `${MARCA} | Reservas en línea y administración para barberías`,
+      titulo: `${MARCA} | Reservas en línea y administración para barberías y salones de belleza`,
       descripcion,
       ruta: '/',
       cuerpo,
@@ -268,38 +270,38 @@ ${pie()}
     });
   }
 
-  const FECHA_LEGAL = '17 de octubre de 2026';
+  const FECHA_LEGAL = '21 de octubre de 2026';
   const contactoLegal = correo ? `escribiendo a <a href="mailto:${esc(correo)}">${esc(correo)}</a>` : 'mediante los canales de contacto indicados en esta página';
 
   function privacidad() {
     return documento({
       titulo: `Política de privacidad | ${MARCA}`,
-      descripcion: `Cómo ${MARCA} trata los datos de las barberías y de sus clientes.`,
+      descripcion: `Cómo ${MARCA} trata los datos de los negocios (barberías y salones de belleza) y de sus clientes.`,
       ruta: '/privacidad',
       cuerpo: `<div class="wrap legal">
 <h1>Política de privacidad</h1>
 <p class="fecha">Última actualización: ${FECHA_LEGAL}</p>
-<p>${MARCA} es una plataforma que permite a las barberías recibir reservas en línea y administrar su negocio. Esta política explica qué datos tratamos y con qué fin.</p>
+<p>${MARCA} es una plataforma que permite a las barberías y los salones de belleza recibir reservas en línea y administrar su negocio. Esta política explica qué datos tratamos y con qué fin.</p>
 <h2>1. Datos que tratamos</h2>
 <ul>
-<li>De las personas que crean una barbería: nombre, correo electrónico, nombre del negocio y los datos que configuren (servicios, horarios, barberos, precios).</li>
-<li>De los clientes que reservan en la página de una barbería: nombre, teléfono y los datos de la cita (servicio, barbero, fecha y hora).</li>
+<li>De las personas que crean un negocio: nombre, correo electrónico, nombre y tipo del negocio y los datos que configuren (servicios, horarios, equipo, precios).</li>
+<li>De los clientes que reservan en la página de un negocio: nombre, teléfono y los datos de la cita (servicio, profesional, fecha y hora).</li>
 <li>Datos técnicos necesarios para la seguridad, como la dirección IP y registros de acceso.</li>
 </ul>
 <h2>2. Para qué los usamos</h2>
 <ul>
-<li>Crear y administrar las cuentas, las barberías y sus reservas.</li>
+<li>Crear y administrar las cuentas, los negocios y sus reservas.</li>
 <li>Enviar correos necesarios para el servicio, como la confirmación de la cuenta o el cambio de contraseña.</li>
 <li>Proteger la plataforma y evitar usos indebidos.</li>
 </ul>
 <h2>3. Quién ve los datos</h2>
-<p>Cada barbería accede únicamente a su propia información y a las reservas de sus clientes. No vendemos datos personales. Usamos proveedores tecnológicos para alojar la aplicación, la base de datos y el envío de correos, solo en la medida necesaria para prestar el servicio.</p>
+<p>Cada negocio accede únicamente a su propia información y a las reservas de sus clientes. No vendemos datos personales. Usamos proveedores tecnológicos para alojar la aplicación, la base de datos y el envío de correos, solo en la medida necesaria para prestar el servicio.</p>
 <h2>4. Conservación</h2>
-<p>Conservamos los datos mientras la cuenta esté activa y el tiempo razonable necesario para cumplir obligaciones aplicables. Al terminar una prueba o una suscripción, los datos de la barbería se conservan para que pueda reactivarla, salvo que solicite su eliminación.</p>
+<p>Conservamos los datos mientras la cuenta esté activa y el tiempo razonable necesario para cumplir obligaciones aplicables. Al terminar una prueba o una suscripción, los datos del negocio se conservan para que pueda reactivarla, salvo que solicite su eliminación.</p>
 <h2>5. Seguridad</h2>
-<p>Las contraseñas se guardan cifradas, las conexiones usan HTTPS y el acceso a cada barbería está separado. Ningún sistema es completamente infalible, pero aplicamos medidas razonables para proteger la información.</p>
+<p>Las contraseñas se guardan cifradas, las conexiones usan HTTPS y el acceso a cada negocio está separado. Ningún sistema es completamente infalible, pero aplicamos medidas razonables para proteger la información.</p>
 <h2>6. Derechos</h2>
-<p>Puedes solicitar acceso, corrección o eliminación de tus datos ${contactoLegal}. Si reservaste en una barbería, también puedes pedírselo directamente a esa barbería.</p>
+<p>Puedes solicitar acceso, corrección o eliminación de tus datos ${contactoLegal}. Si reservaste en un negocio, también puedes pedírselo directamente a ese negocio.</p>
 <h2>7. Cambios</h2>
 <p>Podemos actualizar esta política; la fecha de actualización se indica al inicio.</p>
 </div>`
@@ -309,25 +311,25 @@ ${pie()}
   function condiciones() {
     return documento({
       titulo: `Condiciones de uso | ${MARCA}`,
-      descripcion: `Condiciones para usar ${MARCA}, la plataforma de reservas para barberías.`,
+      descripcion: `Condiciones para usar ${MARCA}, la plataforma de reservas para barberías y salones de belleza.`,
       ruta: '/condiciones',
       cuerpo: `<div class="wrap legal">
 <h1>Condiciones de uso</h1>
 <p class="fecha">Última actualización: ${FECHA_LEGAL}</p>
 <h2>1. El servicio</h2>
-<p>${MARCA} ofrece a las barberías una página de reservas en línea y herramientas de administración (agenda, barberos, servicios, caja, productos, clientes e informes).</p>
+<p>${MARCA} ofrece a las barberías y los salones de belleza una página de reservas en línea y herramientas de administración (agenda, equipo, servicios, caja, productos, clientes e informes).</p>
 <h2>2. Cuenta</h2>
-<p>Quien crea una barbería es responsable de la veracidad de sus datos, de mantener su contraseña en secreto y de las personas que invite a su equipo.</p>
+<p>Quien crea un negocio es responsable de la veracidad de sus datos, de mantener su contraseña en secreto y de las personas que invite a su equipo.</p>
 <h2>3. Prueba gratuita, planes y pagos</h2>
 <ul>
-<li>Cada barbería nueva empieza con una prueba gratuita por los días indicados en su plan. No se solicita medio de pago ni se realizan cobros automáticos.</li>
-<li>Al terminar la prueba, la barbería conserva sus datos, pero no recibe reservas nuevas hasta que su plan sea activado por nuestro equipo.</li>
-<li>Cada plan permite un número máximo de barberos activos. Los cambios de plan se solicitan desde el panel y se aplican cuando nuestro equipo los aprueba.</li>
+<li>Cada negocio nuevo empieza con una prueba gratuita por los días indicados en su plan. No se solicita medio de pago ni se realizan cobros automáticos.</li>
+<li>Al terminar la prueba, el negocio conserva sus datos, pero no recibe reservas nuevas hasta que su plan sea activado por nuestro equipo.</li>
+<li>Cada plan permite un número máximo de barberos o profesionales activos. Los cambios de plan se solicitan desde el panel y se aplican cuando nuestro equipo los aprueba.</li>
 </ul>
 <h2>4. Uso adecuado</h2>
-<p>No está permitido usar la plataforma para fines ilegales, para enviar información falsa o para intentar acceder a datos de otras barberías. Podemos suspender cuentas que incumplan estas condiciones.</p>
+<p>No está permitido usar la plataforma para fines ilegales, para enviar información falsa o para intentar acceder a datos de otros negocios. Podemos suspender cuentas que incumplan estas condiciones.</p>
 <h2>5. Datos de los clientes</h2>
-<p>Cada barbería es responsable del uso que hace de los datos de sus clientes. ${MARCA} los trata según su <a href="/privacidad">política de privacidad</a>.</p>
+<p>Cada negocio es responsable del uso que hace de los datos de sus clientes. ${MARCA} los trata según su <a href="/privacidad">política de privacidad</a>.</p>
 <h2>6. Disponibilidad</h2>
 <p>Trabajamos para que el servicio esté disponible de forma continua, pero puede haber interrupciones por mantenimiento o causas ajenas a nosotros.</p>
 <h2>7. Contacto</h2>
@@ -353,7 +355,8 @@ ${pie()}
     res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'strict-origin-when-cross-origin', 'X-Frame-Options': 'SAMEORIGIN' });
     if (req.secure || req.headers['x-forwarded-proto'] === 'https') res.set('Strict-Transport-Security', 'max-age=15552000');
     if (host !== principal) return res.redirect(301, urlSitio + req.originalUrl);
-    if (req.path === '/api/health') return next();
+    /* Salud y webhooks (WhatsApp) siguen llegando a la aplicación aunque usen el dominio principal. */
+    if (req.path === '/api/health' || req.path.startsWith('/webhooks/')) return next();
     if (req.method !== 'GET' && req.method !== 'HEAD') return res.status(404).json({ ok: false, error: 'No encontrado' });
 
     const html = (contenido, segundos = 300) => {
@@ -369,7 +372,7 @@ ${pie()}
     };
     const pagina = paginas[req.path];
     if (pagina) return Promise.resolve(pagina()).catch(next);
-    /* Cualquier otra dirección (acceso, paneles, reservas, /b/…) está en la aplicación. */
+    /* Cualquier otra dirección (acceso, paneles, reservas, /b/…) está en la aplicación: por ejemplo, la página de El Máster en /b/el-master/. */
     return res.redirect(301, base + req.originalUrl);
   }
 

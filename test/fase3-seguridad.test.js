@@ -96,7 +96,7 @@ test.describe('Fase 3 · seguridad', { skip: omitir }, () => {
     assert.equal(sin.headers.get('location'), '/acceso.html');
     const con = await s.pedir('GET', '/admin.html');
     assert.equal(con.status, 200);
-    assert.match(con.texto, /El Máster \| Administración/);
+    assert.match(con.texto, /MF Plux \| Administración/);
     assert.equal((await s.pedir('GET', '/acceso.html', undefined, { cookie: null })).status, 200);
     assert.equal((await s.pedir('GET', '/', undefined, { cookie: null })).status, 200, 'la página pública sigue abierta');
     assert.equal(sin.headers.get('x-content-type-options'), 'nosniff');

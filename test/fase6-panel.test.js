@@ -128,6 +128,8 @@ test.describe('Fase 6 · aviso de suscripción en el panel', () => {
       const q = new URLSearchParams({ plan: 'Pro', negocio: nombreNegocio, nombre: 'Rosa', correo, telefono: '+593 99 000 0000', pais: 'Colombia' });
       await page.goto(`${s.base}/acceso.html?${q}#registro`);
       await page.waitForSelector('#reg-plan:not(.oculto)');
+      /* Enlace anterior, sin tipo: se elige al llegar (MF Plux). */
+      await page.click('#tipo-barberia');
       assert.equal(await page.textContent('#reg-plan'), 'Plan Pro · $19.99 al mes · hasta 4 barberos · 7 días de prueba gratis');
       assert.equal(await page.inputValue('#reg-negocio'), nombreNegocio);
       assert.equal(await page.inputValue('#reg-email'), correo);

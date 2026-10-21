@@ -254,6 +254,9 @@ test.describe('Fase 4 · panel en el navegador', () => {
       await page.goto(s.base + '/acceso.html');
       assert.equal(await page.isVisible('#enlace-registro'), true, 'en pruebas el registro está abierto');
       await page.click('#enlace-registro');
+      /* MF Plux: primero se elige el tipo de negocio. */
+      assert.equal(await page.isVisible('#form-registro'), false, 'el formulario aparece después de elegir el tipo');
+      await page.click('#tipo-barberia');
       await page.fill('#reg-negocio', 'Barbería ' + unico());
       await page.fill('#reg-nombre', 'Rosa');
       await page.fill('#reg-email', correo);

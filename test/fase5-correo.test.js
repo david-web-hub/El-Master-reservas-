@@ -31,7 +31,7 @@ test.describe('Fase 5 · plantillas de correo', () => {
     for (const plantilla of ['confirmacion', 'recuperacion', 'invitacion', 'prueba']) {
       const c = construirCorreo(plantilla, { nombre: 'Ana', negocio: 'El Máster', rol: 'Barbero', invitante: 'Carlos', enlace });
       assert.ok(c.asunto.length > 10, plantilla);
-      assert.match(c.html, /MASTER PLUS/);
+      assert.match(c.html, /MF PLUX/);
       assert.match(c.html, /#f4c94d/i, 'color dorado de la marca');
       assert.ok(c.html.includes(`href="${enlace}"`), 'botón con el enlace');
       assert.ok(c.texto.includes(enlace), 'versión de texto con el enlace');
@@ -102,7 +102,7 @@ test.describe('Fase 5 · envío por Resend (servidor falso)', { skip: omitir }, 
     assert.equal(m.cuerpo.from, 'Master Reservas <no-responder@reservas.example>');
     assert.deepEqual(m.cuerpo.to, [correo]);
     assert.equal(m.cuerpo.reply_to, 'soporte@reservas.example');
-    assert.match(m.cuerpo.subject, /^Bienvenido a Master Plus: confirma tu correo$/);
+    assert.match(m.cuerpo.subject, /^Bienvenido a MF Plux: confirma tu correo$/);
     assert.match(m.cuerpo.html, /https:\/\/reservas\.example\/acceso\.html#verificar=/, 'enlace con PUBLIC_BASE_URL');
     assert.match(m.cuerpo.text, /verificar=/);
     const registros = s.logs.slice(desde).join('\n');

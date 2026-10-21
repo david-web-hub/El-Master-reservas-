@@ -152,6 +152,8 @@ function crearPlataforma({ pool }) {
       country: b.country,
       currency: b.currency,
       timezone: b.timezone,
+      /* Barbería o salón de belleza (null: negocio anterior al registro con tipo, se trata como barbería). */
+      businessType: b.business_type || null,
       createdAt: iso(b.created_at),
       owner: b.owner_name || b.owner_email ? { name: b.owner_name || '', email: b.owner_email || '' } : null,
       subscription: resumenSuscripcion(b, ahora),

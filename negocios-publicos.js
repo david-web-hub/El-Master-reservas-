@@ -4,7 +4,8 @@
   Cada barbería tiene su página de reservas en /b/<dirección>/ (la dirección
   es el "slug" que se crea al registrarse). La barbería principal sigue en "/".
 
-  - Solo lectura: id, dirección, nombre y zona horaria. Nada privado.
+  - Solo lectura: id, dirección, nombre, zona horaria y tipo de negocio
+    (barbería o salón; vacío en los negocios anteriores). Nada privado.
   - Una barbería suspendida (y no protegida) no tiene página pública.
   - Se guarda en memoria unos segundos para no consultar la base en cada petición.
 */
@@ -20,13 +21,14 @@ function crearDirectorio({ pool, ttlMs = 30000, zonaPorDefecto = 'America/Guayaq
   async function cargar() {
     if (!pool) return;
     const r = await pool.query(
-      `SELECT id, slug, name, timezone, status, protected FROM businesses`);
+      `SELECT id, slug, name, timezone, status, protected, business_type FROM businesses`);
     const ids = new Map();
     const slugs = new Map();
     for (const b of r.rows) {
       const fila = {
         id: b.id, slug: b.slug, name: b.name,
         timezone: b.timezone || zonaPorDefecto,
+        tipo: b.business_type || null,
         publica: b.status !== 'suspended' || Boolean(b.protected)
       };
       ids.set(b.id, fila);
@@ -62,7 +64,16 @@ function crearDirectorio({ pool, ttlMs = 30000, zonaPorDefecto = 'America/Guayaq
     return (porId.get(id) || {}).slug || null;
   }
 
-  return { buscar, zona, slugDe, actualizar, invalidar: () => { cargadoEn = 0; } };
+  /* Tipo elegido al registrarse ('barberia' o 'salon'), o null en los negocios anteriores. */
+  function tipoDe(id) {
+    return (porId.get(id) || {}).tipo || null;
+  }
+
+  function nombreDe(id) {
+    return (porId.get(id) || {}).name || null;
+  }
+
+  return { buscar, zona, slugDe, tipoDe, nombreDe, actualizar, invalidar: () => { cargadoEn = 0; } };
 }
 
 module.exports = { crearDirectorio, DIRECCION };
