@@ -29,6 +29,22 @@ test('página comercial: el logo de la M no cambia', async () => {
   assert.ok(!html.includes('ojo-boton') && !html.includes('ver-contrasena'), 'la página comercial no tiene contraseñas');
 });
 
+test('favicon: la M de la página comercial también en el acceso, el panel y el cierre de sesión', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const fuente = fs.readFileSync(path.join(__dirname, '..', 'sitio-publico.js'), 'utf8');
+  const ICONO = fuente.match(/const ICONO = "([^"]+)"/)[1];
+  assert.match(ICONO, /fill='%23d4af37'/, 'cuadrado amarillo');
+  assert.match(ICONO, /%3EM%3C\/text%3E/, 'una sola M negra (sin MF)');
+  for (const pagina of ['acceso.html', 'admin.html', 'salir.html']) {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', pagina), 'utf8');
+    const iconos = [...html.matchAll(/<link rel="icon" href="([^"]+)">/g)].map(m => m[1]);
+    assert.deepEqual(iconos, [ICONO], `${pagina}: el mismo favicon que mfplux.com`);
+  }
+  /* La página de reservas de cada negocio sigue usando el logo que sube su propietario. */
+  assert.ok(!fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8').includes('<link rel="icon"'));
+});
+
 test.describe('navegador: MF y ojito', () => {
   let s, navegador, motivo = null;
 
