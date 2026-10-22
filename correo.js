@@ -48,7 +48,7 @@ function marco({ titulo, saludo, parrafos, boton, enlace, nota, preencabezado })
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;">
       <tr><td style="padding:0 4px 20px;">
         <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-          <td style="width:44px;height:44px;border-radius:13px;background:${COLORES.oro2};background-image:linear-gradient(145deg,${COLORES.oro2},#c99b22);text-align:center;vertical-align:middle;font-size:22px;color:#090909;">&#9819;</td>
+          <td style="width:44px;height:44px;border-radius:13px;background:${COLORES.oro2};background-image:linear-gradient(145deg,${COLORES.oro2},#c99b22);text-align:center;vertical-align:middle;font-size:17px;font-weight:900;letter-spacing:.02em;color:#090909;">MF</td>
           <td style="padding-left:12px;font-family:${fuente};">
             <div style="color:${COLORES.texto};font-weight:800;letter-spacing:.08em;font-size:15px;">MF PLUX</div>
             <div style="color:${COLORES.apagado};font-size:13px;">Administración de tu barbería</div>
