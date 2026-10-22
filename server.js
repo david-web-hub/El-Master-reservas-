@@ -477,6 +477,62 @@ app.use(
   }
 );
 
+/* =========================================================
+   PÁGINA PÚBLICA SEGÚN EL TIPO DE NEGOCIO (MF Plux)
+   En /b/<dirección>/ de un negocio registrado como barbería
+   o salón de belleza, el título del navegador y los metadatos
+   llegan ya con su nombre y su categoría (también para los
+   buscadores y las vistas previas al compartir el enlace).
+   Los negocios anteriores, sin tipo (como El Máster), reciben
+   su página exactamente igual que antes.
+========================================================= */
+
+const CATEGORIA_NEGOCIO = {
+  barberia: { titulo: 'Barbería', texto: 'barbería', profesional: 'barbero' },
+  salon: { titulo: 'Salón de belleza', texto: 'salón de belleza', profesional: 'profesional' }
+};
+const escHtml = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let plantillaPaginaPublica = null;
+
+app.get('/index.html', (req, res, next) => {
+
+  const tipo = req.negocioPublico ? directorio.tipoDe(req.negocioPublico) : null;
+  const categoria = CATEGORIA_NEGOCIO[tipo];
+
+  if (!categoria) return next();
+
+  try {
+
+    if (!plantillaPaginaPublica) {
+      plantillaPaginaPublica = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    }
+
+    const nombre = directorio.nombreDe(req.negocioPublico) || '';
+    /* Igual que la página en el navegador: si el nombre ya dice la categoría, no se repite. */
+    const titulo = !nombre ? categoria.titulo
+      : nombre.toLowerCase().includes(categoria.titulo.toLowerCase()) ? nombre
+      : `${nombre} · ${categoria.titulo}`;
+    const descripcion = `Reserva en ${nombre || 'este negocio'}, ${categoria.texto}. Elige ${categoria.profesional}, servicio, día y hora en línea.`;
+    const cabecera =
+      `<title>${escHtml(titulo)}</title>\n` +
+      `<meta name="description" content="${escHtml(descripcion)}">\n` +
+      `<meta property="og:type" content="website">\n` +
+      `<meta property="og:title" content="${escHtml(titulo)}">\n` +
+      `<meta property="og:description" content="${escHtml(descripcion)}">\n` +
+      `<meta property="og:site_name" content="${escHtml(nombre || categoria.titulo)}">\n` +
+      `<meta name="business-type" content="${tipo}">`;
+
+    res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+    res.send(plantillaPaginaPublica.replace('<title>Reservas</title>', cabecera));
+
+  } catch (error) {
+
+    next(error);
+
+  }
+
+});
+
 app.use(
   express.static(
     path.join(
@@ -8587,7 +8643,7 @@ app.post('/api/admin/planes/solicitud', async (req, res) => {
   try {
     const solicitud = await plataforma.solicitarPlan(negocioActual(), req.body?.plan, { userId: req.sesion?.usuario?.id });
     console.log(`PLANES: ${negocioActual()} solicita el plan ${solicitud.requestedPlan} (pendiente de aprobación)`);
-    res.status(201).json({ ...(await datosPlanes()), message: 'Solicitud enviada. Tu plan cambiará cuando Master Plus la apruebe.' });
+    res.status(201).json({ ...(await datosPlanes()), message: 'Solicitud enviada. Tu plan cambiará cuando MF Plux la apruebe.' });
   } catch (error) {
     responderErrorPlataforma(res, error, 'SOLICITUD DE PLAN');
   }
@@ -8682,7 +8738,7 @@ async function rechazoPorLimite(db, excluirId) {
     ok: false,
     code: 'LIMITE_BARBEROS',
     error: `Tu plan ${limites.plan} permite ${n} ${n === 1 ? 'barbero activo' : 'barberos activos'} y ya ${activos === 1 ? 'tienes 1' : 'tienes ' + activos}. ` +
-      'Para agregar o activar otro, cambia a un plan superior con Master Plus, o desactiva un barbero.',
+      'Para agregar o activar otro, cambia a un plan superior con MF Plux, o desactiva un barbero.',
     limits: { plan: limites.plan, maxBarbers: n, activeBarbers: activos }
   };
 }
@@ -8902,7 +8958,9 @@ app.get('/api/public/site', async (req, res) => {
       mapUrl: cleanUrl(neg.mapUrl),
       instagram: cleanUrl(neg.instagram),
       tiktok: cleanUrl(neg.tiktok),
-      facebook: cleanUrl(neg.facebook)
+      facebook: cleanUrl(neg.facebook),
+      /* 'barberia' o 'salon' según el registro; null en los negocios anteriores (como El Máster). */
+      type: directorio.tipoDe(negocioActual())
     },
     page: {
       title: cleanText(pag.title, 80),

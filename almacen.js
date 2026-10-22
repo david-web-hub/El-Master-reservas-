@@ -463,13 +463,26 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-10-mfplux-001',
+  descripcion: 'Tipo de negocio (barbería o salón de belleza) elegido al registrarse',
+  sql: `
+    /* Solo añade una columna vacía: los negocios existentes no se modifican (sin tipo = barbería). */
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS business_type TEXT
+      CHECK (business_type IS NULL OR business_type IN ('barberia', 'salon'));
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
+/* Tipos de negocio: comparten la misma aplicación, planes y funciones. */
+const TIPOS_NEGOCIO = ['barberia', 'salon'];
 
 function payloadNegocio(b) {
   return {
     id: b.id, slug: b.slug, name: b.name, country: b.country, currency: b.currency,
     locale: b.locale, timezone: b.timezone, status: b.status, plan: b.plan || null,
+    businessType: b.business_type || null,
     createdAt: b.created_at
   };
 }
@@ -1132,7 +1145,8 @@ function crearAlmacen(opciones) {
     const slug = String(datos.slug || id).trim().toLowerCase();
     if (!SLUG.test(slug)) throw new ErrorAlmacen('SLUG_INVALIDO', `Dirección pública no válida: ${slug}`);
     const nombre = texto(String(datos.name || '').trim(), 120);
-    if (!nombre) throw new ErrorAlmacen('NOMBRE_REQUERIDO', 'Escribe el nombre de la barbería');
+    const tipo = TIPOS_NEGOCIO.includes(datos.businessType) ? datos.businessType : 'barberia';
+    if (!nombre) throw new ErrorAlmacen('NOMBRE_REQUERIDO', tipo === 'salon' ? 'Escribe el nombre del salón' : 'Escribe el nombre de la barbería');
 
     const base = normalizar(datosIniciales());
     const db = {
@@ -1141,7 +1155,7 @@ function crearAlmacen(opciones) {
       settings: base.settings,
       /* Registro: un primer barbero con el nombre del propietario para poder reservar desde el primer día. */
       barbers: datos.primerBarbero
-        ? [{ id: 'barbero-1', name: texto(String(datos.primerBarbero), 80) || 'Barbero', specialty: 'Barbero', active: true }]
+        ? [{ id: 'barbero-1', name: texto(String(datos.primerBarbero), 80) || (tipo === 'salon' ? 'Profesional' : 'Barbero'), specialty: tipo === 'salon' ? 'Profesional' : 'Barbero', active: true }]
         : [],
       services: base.services || [],
       bookings: []
@@ -1156,13 +1170,13 @@ function crearAlmacen(opciones) {
       if (existe.rowCount) throw new ErrorAlmacen('NEGOCIO_EXISTE', `Ya existe una barbería con id o dirección "${slug}"`);
       const r = await client.query(
         `INSERT INTO businesses (id, slug, name, country, currency, locale, timezone, status, plan,
-                                 trial_ends_at, contact_email, contact_phone, origin)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'registro') RETURNING *`,
+                                 trial_ends_at, contact_email, contact_phone, origin, business_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'registro', $13) RETURNING *`,
         [id, slug, nombre,
           texto(datos.country, 2) || 'EC', texto(datos.currency, 3) || 'USD',
           texto(datos.locale, 20) || 'es-EC', texto(datos.timezone, 64) || 'America/Guayaquil',
           datos.status === 'active' ? 'active' : 'trial', texto(datos.plan, 60),
-          datos.trialEndsAt || null, texto(datos.contactEmail, 160), texto(datos.contactPhone, 40)]);
+          datos.trialEndsAt || null, texto(datos.contactEmail, 160), texto(datos.contactPhone, 40), tipo]);
       await insertarTodo(client, id, db, 'registro');
       await client.query(
         `INSERT INTO platform_events (business_id, type, payload) VALUES ($1, 'business.created', $2::jsonb)`,
@@ -1216,6 +1230,7 @@ function crearAlmacen(opciones) {
 
 module.exports = {
   crearAlmacen,
+  TIPOS_NEGOCIO,
   ErrorConflictoHorario,
   ErrorAlmacen,
   MIGRACIONES,

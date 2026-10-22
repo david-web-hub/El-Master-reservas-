@@ -1,6 +1,6 @@
 'use strict';
 /*
-  Lanzamiento público de Master Plus.
+  Lanzamiento público de MF Plux (antes Master Plus).
   - masterfadeplus.com (SITIO_PUBLICO_DOMINIO) muestra la página pública con los planes del catálogo real;
     la aplicación de las barberías sigue en PUBLIC_BASE_URL sin cambios; nunca se enlaza al Panel Maestro (app.masterfadeplus.com).
   - Buscadores: el sitio se indexa; el acceso, los paneles y la API no.
@@ -62,7 +62,7 @@ async function enHost(s, host, ruta, opciones = {}) {
   return r;
 }
 
-test.describe('Lanzamiento público de Master Plus', { skip: omitir }, () => {
+test.describe('Lanzamiento público de MF Plux', { skip: omitir }, () => {
   let s, pool, puerto, privada;
 
   test.before(async () => {
@@ -91,7 +91,7 @@ test.describe('Lanzamiento público de Master Plus', { skip: omitir }, () => {
     assert.equal(r.status, 200);
     assert.match(r.headers['content-type'], /text\/html/);
     const html = r.texto;
-    assert.match(html, /<title>Master Plus \| Reservas en línea y administración para barberías<\/title>/);
+    assert.match(html, /<title>MF Plux \| Reservas en línea y administración para barberías y salones de belleza<\/title>/);
     assert.match(html, /<meta name="description" content="[^"]{80,200}">/);
     assert.match(html, /<meta name="robots" content="index, follow">/);
     assert.match(html, /<link rel="canonical" href="https:\/\/masterfadeplus\.com\/">/);
@@ -101,11 +101,11 @@ test.describe('Lanzamiento público de Master Plus', { skip: omitir }, () => {
     for (const p of CATALOGO) {
       assert.ok(html.includes(`data-plan="${p.name}"`), p.name);
       assert.ok(html.includes(`$${p.price.toFixed(2)}`), `${p.name} a $${p.price}`);
-      assert.ok(html.includes(`href="http://${APP}:${puerto}/acceso.html?plan=${p.name}#registro"`), `Crear mi barbería con ${p.name}`);
+      assert.ok(html.includes(`href="http://${APP}:${puerto}/acceso.html?plan=${p.name}#registro"`), `Crear mi cuenta con ${p.name}`);
     }
-    assert.match(html, /1 barbero<\/li>[\s\S]*Hasta 4 barberos[\s\S]*Hasta 10 barberos/);
+    assert.match(html, /1 barbero o profesional<\/li>[\s\S]*Hasta 4 barberos o profesionales[\s\S]*Hasta 10 barberos o profesionales/);
     assert.match(html, /7 días de prueba gratis/);
-    assert.match(html, /id="crearBarberia"[^>]*>Crear mi barbería</);
+    assert.match(html, /id="crearBarberia"[^>]*>Crear mi cuenta</);
     assert.ok(html.includes(`href="http://${APP}:${puerto}/acceso.html" id="iniciarSesion"`));
     assert.match(html, /href="\/privacidad"[\s\S]*href="\/condiciones"/);
     assert.match(html, /mailto:hola@masterfadeplus\.com/);
@@ -163,7 +163,7 @@ test.describe('Lanzamiento público de Master Plus', { skip: omitir }, () => {
   test('en la aplicación: la página de El Máster sigue en la raíz y lo privado no se indexa', async () => {
     const raiz = await enHost(s, APP, '/');
     assert.equal(raiz.status, 200);
-    assert.doesNotMatch(raiz.texto, /Master Plus \| Reservas en línea/, 'la aplicación no cambia');
+    assert.doesNotMatch(raiz.texto, /MF Plux \| Reservas en línea/, 'la aplicación no cambia');
     assert.equal(raiz.headers['x-robots-tag'], undefined);
     for (const ruta of ['/acceso.html', '/admin.html', '/api/auth/config', '/salir.html']) {
       assert.equal((await enHost(s, APP, ruta)).headers['x-robots-tag'], 'noindex, nofollow', ruta);
@@ -188,7 +188,7 @@ test.describe('Lanzamiento público de Master Plus', { skip: omitir }, () => {
 
         /* 1. Página principal. */
         await page.goto(`http://${SITIO}:${puerto}/`);
-        assert.equal(await page.title(), 'Master Plus | Reservas en línea y administración para barberías');
+        assert.equal(await page.title(), 'MF Plux | Reservas en línea y administración para barberías y salones de belleza');
         assert.ok(await sinDesborde(), `${nombreVista}: sin desplazamiento horizontal`);
         assert.ok(await page.locator('#crearBarberia').isVisible());
         await page.click('#crearBarberia');
@@ -201,6 +201,7 @@ test.describe('Lanzamiento público de Master Plus', { skip: omitir }, () => {
         assert.match(await page.textContent('#reg-plan'), new RegExp(`Plan ${plan}`));
         const correo = `visitante-${unico()}@prueba.test`;
         const barberia = `Barbería ${nombreVista} ${unico()}`;
+        await page.click('#tipo-barberia');
         await page.fill('#reg-negocio', barberia);
         await page.fill('#reg-nombre', 'Visitante');
         await page.fill('#reg-email', correo);
@@ -325,7 +326,7 @@ test.describe('Lanzamiento público de Master Plus', { skip: omitir }, () => {
     try {
       assert.ok(mal.logs.some(l => /SITIO PÚBLICO DESACTIVADO: .*mismo dominio/.test(l)));
       const r = await enHost(mal, SITIO, '/');
-      assert.doesNotMatch(r.texto, /Master Plus \| Reservas en línea/, 'no reemplaza la página de reservas');
+      assert.doesNotMatch(r.texto, /MF Plux \| Reservas en línea/, 'no reemplaza la página de reservas');
     } finally {
       await mal.detener();
       mal.borrar();

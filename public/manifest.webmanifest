@@ -1,7 +1,7 @@
 {
-  "name": "El Máster Barber Studio",
-  "short_name": "El Máster",
-  "description": "Sistema de reservas de El Máster Barber Studio",
+  "name": "MF Plux",
+  "short_name": "MF Plux",
+  "description": "Reservas y administración para barberías y salones de belleza",
   "start_url": "/admin.html",
   "scope": "/",
   "display": "standalone",

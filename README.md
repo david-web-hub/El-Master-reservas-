@@ -17,6 +17,12 @@ MVP funcional preparado para:
 - Cada barbería registrada tiene su panel, su página pública de reservas en `/b/<dirección>/` y, si lo conecta, su propio WhatsApp con Elia (Configuración → WhatsApp y Elia). La barbería principal (El Máster) sigue en `/`.
 - Informe: `docs/fase-7/INFORME.md`. Correo (Resend), Meta, variables y despliegue: `docs/despliegue/FASE-7.md`.
 
+## MF Plux: barberías y salones de belleza
+
+- Marca pública **MF Plux** (página comercial en `SITIO_PUBLICO_DOMINIO`, por ejemplo `mfplux.com`).
+- Al crear una cuenta se elige **Barbería** o **Salón de belleza**: misma aplicación, mismos planes y precios. El tipo se guarda en `businesses.business_type` y la página pública lo muestra.
+- Informe e instrucciones de publicación: `docs/mfplux/INFORME.md`.
+
 ## Probar localmente
 1. Instala Node.js 18+.
 2. Copia `.env.example` a `.env`.

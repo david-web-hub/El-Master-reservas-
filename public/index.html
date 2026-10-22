@@ -22,6 +22,7 @@ a{color:inherit}
 .brand{display:flex;align-items:center;gap:12px;margin-bottom:32px}
 .brand img{height:64px;width:auto;max-width:180px;object-fit:contain}
 .brand span{font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--primary);font-size:20px}
+.brand .categoria{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 10px}
 h1{font-size:clamp(34px,9vw,60px);line-height:1.05;font-weight:800;max-width:14ch}
 h1 em{display:block;font-style:normal;color:var(--primary)}
 .hero p{color:var(--muted);margin:12px 0 22px;font-size:17px;max-width:46ch}
@@ -152,6 +153,9 @@ const DAYS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábad
 const DAY_ORDER = [1,2,3,4,5,6,0];
 
 let site = null;
+/* Palabras según el tipo de negocio: un salón de belleza habla de «profesionales»; una barbería (y los negocios anteriores, sin tipo) de «barberos». */
+const CATEGORIAS = { barberia: 'Barbería', salon: 'Salón de belleza' };
+let W = { plural: 'Barberos', uno: 'barbero', Uno: 'Barbero' };
 /* Página de otra barbería: /b/<dirección>/ (la principal usa la raíz). */
 const BASE = (location.pathname.match(/^\/b\/[a-z0-9][a-z0-9-]{1,62}/) || [''])[0];
 let galleryIndex = 0;
@@ -214,7 +218,13 @@ function render() {
   document.querySelector('meta[name=theme-color]').setAttribute('content', t.background);
 
   const title = p.title || b.name || 'Reservas';
-  document.title = title;
+  const categoria = CATEGORIAS[b.type] || null;
+  W = b.type === 'salon'
+    ? { plural: 'Profesionales', uno: 'profesional', Uno: 'Profesional' }
+    : { plural: 'Barberos', uno: 'barbero', Uno: 'Barbero' };
+  const navEquipo = document.querySelector('[data-go="barberos"]');
+  if (navEquipo && navEquipo.lastChild) navEquipo.lastChild.textContent = W.plural;
+  document.title = categoria && !title.toLowerCase().includes(categoria.toLowerCase()) ? title + ' · ' + categoria : title;
 
   if (site.media.logo) {
     const ic = h('link', { rel: 'icon', href: site.media.logo });
@@ -240,7 +250,8 @@ function renderHero(title) {
   inner.append(
     h('div', { class: 'brand' },
       site.media.logo ? h('img', { src: site.media.logo, alt: b.name || title }) : null,
-      !site.media.logo || p.title ? h('span', {}, p.title || b.name || title) : null),
+      !site.media.logo || p.title ? h('span', {}, p.title || b.name || title) : null,
+      CATEGORIAS[b.type] ? h('small', { class: 'categoria' }, CATEGORIAS[b.type]) : null),
     h('h1', {}, p.slogan || title),
     p.description || b.description ? h('p', {}, p.description || b.description) : null,
     h('button', { class: 'btn', id: 'ctaBtn', onclick: openBooking }, '📅 ' + p.ctaText));
@@ -431,12 +442,12 @@ function drawBarbers() {
   const list = site.barbers.filter(b => b.acceptsBookings && b.serviceIds.length);
   const box = h('div', {});
   if (site.page.welcome) box.append(h('p', { class: 'sub', style: 'margin-bottom:12px' }, site.page.welcome));
-  if (!list.length) box.append(h('div', { class: 'empty' }, 'Por ahora no hay barberos disponibles para reservar.'));
+  if (!list.length) box.append(h('div', { class: 'empty' }, 'Por ahora no hay ' + W.plural.toLowerCase() + ' disponibles para reservar.'));
   list.forEach(b => box.append(h('button', { class: 'opt' + (S.barber && S.barber.id === b.id ? ' sel' : ''),
     onclick: () => { if (!S.barber || S.barber.id !== b.id) { S.barber = b; S.ids = new Set(); S.date = ''; S.time = ''; S.slots = []; } S.step = 2; drawBooking(); } },
     h('div', { class: 'av' }, b.photo ? h('img', { src: b.photo, alt: b.name }) : '☺'),
     h('div', { class: 'grow' }, h('strong', {}, b.name), b.description ? h('small', {}, b.description) : null))));
-  frame('1. Elige tu barbero', 1, box);
+  frame('1. Elige tu ' + W.uno, 1, box);
 }
 
 function drawServices() {
@@ -447,7 +458,7 @@ function drawServices() {
     h('div', { class: 'av' }, s.image ? h('img', { src: s.image, alt: s.name }) : '✂'),
     h('div', { class: 'grow' }, h('strong', {}, s.name), h('small', {}, dur(s.duration))),
     h('strong', {}, money(s.price)))));
-  if (!list.length) box.append(h('div', { class: 'empty' }, 'Este barbero no tiene servicios disponibles.'));
+  if (!list.length) box.append(h('div', { class: 'empty' }, 'Este ' + W.uno + ' no tiene servicios disponibles.'));
   frame('2. Elige tus servicios', 2,
     h('p', { class: 'sub' }, 'Con ' + S.barber.name + '. Puedes elegir uno o varios.'), h('div', { style: 'height:10px' }), box,
     h('div', { class: 'tot' }, h('span', {}, 'Duración total: ' + dur(totalDur())), h('span', {}, money(totalPrice()))),
@@ -504,7 +515,7 @@ function drawSlotsArea() {
 function drawConfirm() {
   const end = toHHMM(toMin(S.time) + totalDur());
   const sum = h('div', { class: 'sum' },
-    h('div', {}, h('span', {}, 'Barbero'), h('span', {}, S.barber.name)),
+    h('div', {}, h('span', {}, W.Uno), h('span', {}, S.barber.name)),
     h('div', {}, h('span', {}, 'Servicios'), h('span', {}, chosenServices().map(s => s.name).join(' + '))),
     h('div', {}, h('span', {}, 'Duración total'), h('span', {}, dur(totalDur()))),
     h('div', {}, h('span', {}, 'Fecha'), h('span', {}, prettyDate(S.date))),
@@ -547,7 +558,7 @@ function drawDone() {
   const bk = S.done;
   frame('¡Reserva confirmada!', 0,
     h('div', { class: 'sum' },
-      h('div', {}, h('span', {}, 'Barbero'), h('span', {}, S.barber.name)),
+      h('div', {}, h('span', {}, W.Uno), h('span', {}, S.barber.name)),
       h('div', {}, h('span', {}, 'Fecha'), h('span', {}, prettyDate(bk.date))),
       h('div', {}, h('span', {}, 'Horario'), h('span', {}, bk.time + ' – ' + bk.endTime))),
     h('p', { class: 'sub', style: 'margin:12px 0' }, 'Te esperamos en ' + (site.business.name || 'nuestro local') + '.'),

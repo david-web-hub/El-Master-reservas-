@@ -220,7 +220,7 @@ function crearAutenticacion({
   verificarCorreo = true,
   /* Clave de 32 bytes para cifrar los secretos de dos pasos; sin ella, la función no está disponible. */
   claveDosPasos = null,
-  nombreServicio = 'Master Plus',
+  nombreServicio = 'MF Plux',
   /* Catálogo de planes del Panel Maestro (nombre, días de prueba); vacío si aún no se sincronizó. */
   catalogoPlanes = async () => [],
   /* Días de prueba si el catálogo todavía no llegó (el del Panel Maestro: 7). */
@@ -266,8 +266,12 @@ function crearAutenticacion({
     if (nombre.length < 2) throw new ErrorAuth(400, 'NOMBRE_REQUERIDO', 'Escribe tu nombre');
     const correo = validarCorreo(datos.email);
     const clave = validarClave(datos.password, { correo, nombre });
+    /* Tipo de negocio elegido en «Crear mi cuenta». Sin tipo (enlaces anteriores): barbería. */
+    const tipo = datos.businessType === undefined || datos.businessType === null || datos.businessType === '' ? 'barberia' : datos.businessType;
+    if (!['barberia', 'salon'].includes(tipo)) throw new ErrorAuth(400, 'TIPO_INVALIDO', 'Elige si tu negocio es una barbería o un salón de belleza');
+    const suNegocio = tipo === 'salon' ? 'tu salón' : 'tu barbería';
     const nombreNegocio = String(datos.businessName || '').trim().slice(0, 120);
-    if (nombreNegocio.length < 2) throw new ErrorAuth(400, 'NEGOCIO_REQUERIDO', 'Escribe el nombre de tu barbería');
+    if (nombreNegocio.length < 2) throw new ErrorAuth(400, 'NEGOCIO_REQUERIDO', `Escribe el nombre de ${suNegocio}`);
     const slugPedido = Boolean(datos.slug);
     const slugBase = String(datos.slug || nombreNegocio).toLowerCase()
       .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -306,12 +310,12 @@ function crearAutenticacion({
         negocio = await almacen.crearNegocio({
           id: slug, slug, name: nombreNegocio, primerBarbero: nombre,
           country: datos.country, currency: datos.currency, locale: datos.locale, timezone: datos.timezone,
-          plan: nombrePlan, contactEmail: correo, contactPhone: datos.phone,
+          plan: nombrePlan, contactEmail: correo, contactPhone: datos.phone, businessType: tipo,
           trialEndsAt: new Date(Date.now() + diasPrueba * 24 * 3600 * 1000).toISOString()
         }, { client });
       } catch (error) {
         if (error.code === 'NEGOCIO_EXISTE') throw new ErrorAuth(409, 'SLUG_EXISTE', 'Esa dirección ya está en uso; elige otra.');
-        if (error.code === 'SLUG_INVALIDO' || error.code === 'NEGOCIO_INVALIDO') throw new ErrorAuth(400, 'SLUG_INVALIDO', 'Elige otra dirección para tu barbería');
+        if (error.code === 'SLUG_INVALIDO' || error.code === 'NEGOCIO_INVALIDO') throw new ErrorAuth(400, 'SLUG_INVALIDO', `Elige otra dirección para ${suNegocio}`);
         throw error;
       }
       const userId = nuevoId();
