@@ -2,11 +2,21 @@
   {
     "patron": "^(escritorio|movil)-panel-configuracion\\.png$",
     "completo": true,
-    "motivo": "Fase 7: dos tarjetas nuevas en Configuración («Tu página de reservas» y «WhatsApp y Elia»)"
+    "motivo": "Fase 7: dos tarjetas nuevas en Configuración («Tu página de reservas» y «WhatsApp y Elia»); recuadro MF en el menú"
   },
   {
     "patron": "^(escritorio|movil)-acceso-[a-z]+\\.png$",
     "completo": true,
-    "motivo": "Marca MF Plux en el acceso y el registro; «Crear cuenta» empieza eligiendo Barbería o Salón de belleza"
+    "motivo": "Acceso y registro: recuadro MF en lugar de la coronita y ojito en las contraseñas"
+  },
+  {
+    "patron": "^(escritorio|movil)-ajustes-cuenta\\.png$",
+    "completo": true,
+    "motivo": "Mi cuenta: recuadro MF en el menú y ojito en las tres contraseñas"
+  },
+  {
+    "patron": "^escritorio-(panel|ajustes)-[a-z]+\\.png$",
+    "region": [30, 40, 34, 26],
+    "motivo": "Menú lateral: recuadro MF en lugar de la coronita (solo esa zona)"
   }
 ]
