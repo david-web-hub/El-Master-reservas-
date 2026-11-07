@@ -389,7 +389,7 @@ function origenPermitido(req) {
 
 
 /* Buscadores en la aplicación: las páginas de reservas se pueden indexar; el acceso, los paneles y la API no. */
-const PRIVADAS_SIN_INDEXAR = new Set(['/admin', '/admin.html', '/acceso.html', '/salir.html']);
+const PRIVADAS_SIN_INDEXAR = new Set(['/admin', '/admin.html', '/acceso.html', '/salir.html', '/pago.html']);
 app.get('/robots.txt', (req, res) => {
   res.type('text/plain').set('Cache-Control', 'public, max-age=3600')
     .send('User-agent: *\nDisallow: /api/\nAllow: /\n');
@@ -461,14 +461,14 @@ app.use(
     }
 
     if (
-      (req.path === '/admin.html' || req.path === '/admin') &&
+      (req.path === '/admin.html' || req.path === '/admin' || req.path === '/pago.html') &&
       !req.sesion
     ) {
       res.set('Cache-Control', 'no-store');
       return res.redirect(302, '/acceso.html');
     }
 
-    if (req.path === '/admin.html') {
+    if (req.path === '/admin.html' || req.path === '/pago.html') {
       res.set('Cache-Control', 'no-store');
     }
 
@@ -635,6 +635,8 @@ app.use(
    permiso; lo que no aparece en la lista solo lo puede usar
    el propietario (se niega por defecto).
 ========================================================= */
+
+const { crearPagos, leerConfiguracion: leerConfiguracionPagos, ErrorPago } = require('./pagos');
 
 const {
   crearAutenticacion,
@@ -1198,6 +1200,19 @@ const plataforma =
     ? crearPlataforma({ pool })
     : null;
 
+/* Pagos de suscripción con Payphone: desactivados salvo PAGOS_PAYPHONE (ver pagos.js). */
+const pagosConfig = leerConfiguracionPagos(process.env, { produccion: esProduccion() });
+const pagos = crearPagos({
+  pool: MODO_ALMACEN === 'postgres' ? pool : null,
+  config: pagosConfig,
+  esperaReintentoMs: Number(process.env.PAGOS_REINTENTO_MS) || undefined
+});
+if (pagos.disponible) {
+  console.log(`PAGOS PAYPHONE ACTIVOS (modo: ${pagosConfig.modo})`);
+} else if (process.env.PAGOS_PAYPHONE) {
+  console.warn(`PAGOS PAYPHONE DESACTIVADOS: ${pagosConfig.motivo}`);
+}
+
 /* El Máster (barbería principal) y las indicadas en NEGOCIOS_PROTEGIDOS nunca se bloquean. */
 const NEGOCIOS_PROTEGIDOS = [
   DEFAULT_BUSINESS_ID,
@@ -1208,6 +1223,16 @@ const NEGOCIOS_PROTEGIDOS = [
 /* =========================================================
    INICIALIZAR POSTGRESQL
 ========================================================= */
+
+/* Reintenta confirmaciones de Payphone pendientes y vence formularios abandonados (cada 30 s). */
+let revisionPagos = null;
+function iniciarRevisionPagos() {
+  if (!pagos.disponible || revisionPagos) return;
+  const revisar = () => pagos.revisarPendientes().catch(error => console.error('ERROR PAGOS (REVISIÓN):', error.message));
+  revisionPagos = setInterval(revisar, Number(process.env.PAGOS_REVISION_MS) || 30000);
+  revisionPagos.unref();
+  revisar();
+}
 
 async function initPostgres() {
 
@@ -8624,7 +8649,9 @@ async function datosPlanes() {
         available: p.active, current: p.name.toLowerCase() === actual })),
     subscription,
     limits,
-    request
+    request,
+    /* Pagos en línea (Payphone): si están activos y en qué modo. */
+    payments: pagos.estado()
   };
 }
 
@@ -8656,6 +8683,66 @@ app.delete('/api/admin/planes/solicitud', async (req, res) => {
     res.json({ ...(await datosPlanes()), message: 'Solicitud cancelada.' });
   } catch (error) {
     responderErrorPlataforma(res, error, 'CANCELAR SOLICITUD');
+  }
+});
+
+/* ---------------- PAGOS DE SUSCRIPCIÓN (Payphone) ----------------
+   Solo el propietario. Los datos de la tarjeta los pide Payphone en su
+   Cajita: aquí nunca llegan. El resultado se confirma en el servidor
+   (GET /pagos/payphone/respuesta) y nunca se acepta desde el navegador.
+*/
+function responderErrorPago(res, error, contexto) {
+  if (error instanceof ErrorPago) {
+    return res.status(error.status).json({ ok: false, code: error.code, error: error.message });
+  }
+  console.error(`ERROR PAGOS (${contexto}):`, error.message);
+  return res.status(500).json({ ok: false, error: 'No se pudo completar la operación de pago' });
+}
+
+app.get('/api/admin/pagos', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!plataforma) return res.status(503).json({ ok: false, error: 'Los pagos requieren PostgreSQL' });
+  try {
+    res.json({ ok: true, payments: pagos.estado(), history: pagos.disponible ? await pagos.historial(negocioActual()) : [] });
+  } catch (error) {
+    responderErrorPago(res, error, 'HISTORIAL');
+  }
+});
+
+app.post('/api/admin/pagos', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const r = await pagos.iniciar(negocioActual(), req.body?.plan, { userId: req.sesion?.usuario?.id || null });
+    res.status(201).json({ ok: true, ...r });
+  } catch (error) {
+    responderErrorPago(res, error, 'INICIAR');
+  }
+});
+
+app.get('/api/admin/pagos/:id', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json({ ok: true, payment: await pagos.detalle(negocioActual(), req.params.id) });
+  } catch (error) {
+    responderErrorPago(res, error, 'DETALLE');
+  }
+});
+
+/*
+  URL de respuesta configurada en Payphone Developer: <PUBLIC_BASE_URL>/pagos/payphone/respuesta
+  Payphone redirige aquí con id y clientTransactionId. La confirmación no depende de
+  la sesión: el pago se identifica por su clientTransactionId y se valida con Payphone.
+*/
+app.get('/pagos/payphone/respuesta', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const ctx = String(req.query.clientTransactionId || '').slice(0, 60);
+  const destino = extra => `/pago.html?resultado=${encodeURIComponent(ctx)}${extra || ''}`;
+  try {
+    await pagos.confirmar({ id: req.query.id, clientTransactionId: ctx });
+    res.redirect(303, destino());
+  } catch (error) {
+    if (!(error instanceof ErrorPago)) console.error('ERROR PAGOS (RESPUESTA):', error.message);
+    res.redirect(303, ctx ? destino('&error=1') : '/pago.html?error=1');
   }
 });
 
@@ -12571,6 +12658,8 @@ async function prepararAlmacen() {
         await almacen.iniciar();
 
       await plataforma.protegerNegocios(NEGOCIOS_PROTEGIDOS);
+
+      iniciarRevisionPagos();
 
       console.log(
         `AGENDA EN POSTGRESQL LISTA (barbería: ${DEFAULT_BUSINESS_ID}, ` +

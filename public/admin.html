@@ -8246,12 +8246,17 @@ function renderPlanes(data) {
   }
 
   const pendiente = sol && sol.status === 'pending' ? sol.requestedPlan : null;
+  /* Pagos en línea (Payphone): solo si están activos. Con un período pagado vigente solo se renueva el mismo plan. */
+  const pagos = data.payments && data.payments.enabled && !data.principal;
+  const periodoPagado = sub.status === 'active' && sub.currentPeriodEnd && new Date(sub.currentPeriodEnd) > new Date();
+  const pagar = (p, texto) => `<a class="btn btn-gold" style="display:inline-block;text-decoration:none" href="/pago.html?plan=${encodeURIComponent(p.name)}">${texto}</a>`;
   const tarjetas = (data.plans || []).map(p => {
     const excede = p.maxBarbers != null && lim.activeBarbers > p.maxBarbers;
     let accion;
-    if (p.current) accion = '<span class="badge badge-gold">Plan actual</span>';
+    if (p.current) accion = '<span class="badge badge-gold">Plan actual</span>' + (pagos && p.available ? ' ' + pagar(p, periodoPagado ? 'Renovar un mes' : 'Pagar con tarjeta') : '');
     else if (pendiente === p.name) accion = '<span class="badge badge-gold">Solicitud pendiente</span>';
-    else accion = `<button class="btn btn-gold" onclick="solicitarPlan(this.closest('[data-plan]').dataset.plan)">Solicitar este plan</button>`;
+    else accion = (pagos && !periodoPagado && !excede ? pagar(p, 'Pagar con tarjeta') + ' ' : '') +
+      `<button class="btn ${pagos && !periodoPagado ? 'btn-dark' : 'btn-gold'}" onclick="solicitarPlan(this.closest('[data-plan]').dataset.plan)">Solicitar este plan</button>`;
     return `<div class="card plan-card${p.current ? ' current' : ''}" data-plan="${esc(p.name)}">
       <h3>${esc(p.name)}</h3>
       <div class="plan-price">$${Number(p.price).toFixed(2)}<span class="label"> /mes</span></div>
@@ -8271,6 +8276,7 @@ function renderPlanes(data) {
       <p class="label">Barberos activos: ${lim.activeBarbers ?? 0}${lim.maxBarbers != null ? ' de ' + lim.maxBarbers : ' (sin límite)'}</p>
     </div>
     ${aviso}
+    ${pagos && data.payments.mode === 'pruebas' ? '<div class="card subscription-notice" id="pagosPruebas" style="margin:0 0 16px"><h3>Pagos en modo de pruebas</h3><p>Puedes probar el pago con tarjeta: no se realiza ningún cobro real.</p></div>' : ''}
     <div class="plans-grid">${tarjetas || '<div class="empty">No hay planes disponibles en este momento.</div>'}</div>
     <p class="label" style="margin-top:14px">Los cambios de plan los aprueba MF Plux. Ningún cambio borra tus barberos, reservas, clientes ni tu configuración.</p>`;
 }

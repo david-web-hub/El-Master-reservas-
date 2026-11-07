@@ -9,6 +9,12 @@
   - Las barberías protegidas (El Máster) no se pueden vencer, suspender ni dejar
     con pago pendiente: ni desde el Panel, ni por fechas, ni directamente en la
     base (restricción businesses_protegida_activa).
+  - Pagos con Payphone (pagos.js): un pago confirmado amplía paid_through y
+    avisa al Panel. Mientras el Panel no lo registre (paid_seq mayor que
+    payments_acknowledged_seq), el pago se aplica de forma provisional: el
+    negocio queda activo con el plan pagado hasta paid_through. Una suspensión
+    decidida en el Panel siempre prevalece. Cuando el Panel envía su
+    suscripción con paymentsAppliedSeq, vuelve a mandar solo el Panel.
 */
 
 const ESTADOS = ['trial', 'active', 'past_due', 'expired', 'suspended'];
@@ -25,11 +31,19 @@ class ErrorPlataforma extends Error {
 
 const iso = v => (v ? new Date(v).toISOString() : null);
 
-/* Estado que se aplica de verdad: tiene en cuenta las fechas y la protección. */
+/* Pago confirmado que el Panel Maestro todavía no registró: se aplica de forma provisional. */
+function pagoProvisional(b, ahora = new Date()) {
+  return !b.protected && Boolean(b.paid_through) && new Date(b.paid_through) > ahora &&
+    Number(b.paid_seq || 0) > Number(b.payments_acknowledged_seq || 0);
+}
+
+/* Estado que se aplica de verdad: tiene en cuenta las fechas, la protección y los pagos aún no registrados en el Panel. */
 function estadoEfectivo(b, ahora = new Date()) {
   if (b.protected) return 'active';
   const vencida = fecha => fecha && new Date(fecha) <= ahora;
-  if (b.status === 'suspended' || b.status === 'expired') return b.status;
+  if (b.status === 'suspended') return 'suspended';
+  if (pagoProvisional(b, ahora)) return 'active';
+  if (b.status === 'expired') return b.status;
   if (b.status === 'trial') return vencida(b.trial_ends_at) ? 'expired' : 'trial';
   if (b.status === 'active') return vencida(b.current_period_end) ? 'expired' : 'active';
   if (b.status === 'past_due') return 'past_due';
@@ -38,13 +52,19 @@ function estadoEfectivo(b, ahora = new Date()) {
 
 function resumenSuscripcion(b, ahora = new Date()) {
   const estado = estadoEfectivo(b, ahora);
-  const fin = estado === 'trial' ? b.trial_ends_at : b.current_period_end;
+  const provisional = pagoProvisional(b, ahora);
+  const periodo = provisional && (!b.current_period_end || new Date(b.paid_through) > new Date(b.current_period_end))
+    ? b.paid_through : b.current_period_end;
+  const fin = estado === 'trial' ? b.trial_ends_at : periodo;
   return {
     status: estado,
     storedStatus: b.status,
-    plan: b.plan || null,
+    plan: (provisional ? b.paid_plan : b.plan) || null,
     trialEndsAt: iso(b.trial_ends_at),
-    currentPeriodEnd: iso(b.current_period_end),
+    currentPeriodEnd: iso(periodo),
+    /* Último período pagado con Payphone y si el Panel Maestro todavía no lo registró. */
+    paidThrough: iso(b.paid_through),
+    pendingPanelSync: provisional,
     version: b.subscription_version || 0,
     protected: Boolean(b.protected),
     /* Reservas nuevas: se impiden si venció o está suspendida. */
@@ -88,11 +108,14 @@ function crearPlataforma({ pool }) {
   */
   const SQL_ACTIVOS = `(SELECT count(*) FROM barbers x WHERE x.business_id = b.id
                           AND coalesce(x.data->>'active', 'true') <> 'false')::int`;
+  /* Plan que se aplica: el pagado mientras el Panel no lo registre (mismo criterio que pagoProvisional). */
+  const SQL_PLAN = `(CASE WHEN NOT b.protected AND b.paid_through > NOW() AND b.paid_seq > b.payments_acknowledged_seq
+                          THEN b.paid_plan ELSE b.plan END)`;
 
   async function limitesDe(businessId, consulta = pool) {
     const r = await consulta.query(
-      `SELECT b.plan, b.protected, pp.max_barbers, ${SQL_ACTIVOS} AS activos
-       FROM businesses b LEFT JOIN platform_plans pp ON lower(pp.name) = lower(b.plan)
+      `SELECT ${SQL_PLAN} AS plan, b.protected, pp.max_barbers, ${SQL_ACTIVOS} AS activos
+       FROM businesses b LEFT JOIN platform_plans pp ON lower(pp.name) = lower(${SQL_PLAN})
        WHERE b.id = $1`, [businessId]);
     const f = r.rows[0];
     if (!f) return null;
@@ -135,7 +158,7 @@ function crearPlataforma({ pool }) {
               ${ventas ? `(SELECT coalesce(sum(s.total), 0) FROM sales s WHERE s.business_id = b.id
                  AND s.created_at > NOW() - interval '30 days')::float` : '0::float'} AS sales_30d,
               ${SQL_ACTIVOS} AS n_active_barbers,
-              (SELECT pp.max_barbers FROM platform_plans pp WHERE lower(pp.name) = lower(b.plan)) AS plan_max_barbers,
+              (SELECT pp.max_barbers FROM platform_plans pp WHERE lower(pp.name) = lower(${SQL_PLAN})) AS plan_max_barbers,
               o.name AS owner_name, o.email AS owner_email
        FROM businesses b
        LEFT JOIN LATERAL (
@@ -193,6 +216,11 @@ function crearPlataforma({ pool }) {
     const plan = datos.plan === null || datos.plan === undefined ? null : String(datos.plan).trim().slice(0, 60) || null;
     const finPrueba = fechaOpcional(datos.trialEndsAt, 'trialEndsAt');
     const finPeriodo = fechaOpcional(datos.currentPeriodEnd, 'currentPeriodEnd');
+    /* Último pago de Payphone que el Panel ya registró (ausente en versiones anteriores del Panel). */
+    const pagosVistos = datos.paymentsAppliedSeq === undefined || datos.paymentsAppliedSeq === null ? null : Number(datos.paymentsAppliedSeq);
+    if (pagosVistos !== null && (!Number.isInteger(pagosVistos) || pagosVistos < 0)) {
+      throw new ErrorPlataforma(400, 'DATOS_INVALIDOS', 'paymentsAppliedSeq no válido');
+    }
 
     const client = await pool.connect();
     try {
@@ -206,6 +234,12 @@ function crearPlataforma({ pool }) {
         throw new ErrorPlataforma(409, 'VERSION_ANTIGUA', 'Llegó un cambio más antiguo que el aplicado');
       }
       if (version === b.subscription_version) {
+        if (pagosVistos !== null && pagosVistos > Number(b.payments_acknowledged_seq || 0)) {
+          const r = await client.query(
+            'UPDATE businesses SET payments_acknowledged_seq = $2 WHERE id = $1 RETURNING *', [b.id, pagosVistos]);
+          await client.query('COMMIT');
+          return resumenSuscripcion(r.rows[0]);
+        }
         await client.query('ROLLBACK');
         return resumenSuscripcion(b);
       }
@@ -229,8 +263,9 @@ function crearPlataforma({ pool }) {
       }
       const r = await client.query(
         `UPDATE businesses SET status = $2, plan = $3, trial_ends_at = $4, current_period_end = $5,
-                subscription_version = $6, subscription_updated_at = NOW(), updated_at = NOW()
-         WHERE id = $1 RETURNING *`, [b.id, estado, plan, finPrueba, finPeriodo, version]);
+                subscription_version = $6, subscription_updated_at = NOW(), updated_at = NOW(),
+                payments_acknowledged_seq = GREATEST(payments_acknowledged_seq, coalesce($7, 0))
+         WHERE id = $1 RETURNING *`, [b.id, estado, plan, finPrueba, finPeriodo, version, pagosVistos]);
       await client.query(
         `INSERT INTO platform_events (business_id, type, payload) VALUES ($1, 'subscription.applied', $2::jsonb)`,
         [b.id, JSON.stringify({ status: estado, plan, trialEndsAt: finPrueba, currentPeriodEnd: finPeriodo, version })]);
@@ -446,4 +481,4 @@ function crearPlataforma({ pool }) {
   };
 }
 
-module.exports = { crearPlataforma, ErrorPlataforma, estadoEfectivo, resumenSuscripcion, ESTADOS };
+module.exports = { crearPlataforma, ErrorPlataforma, estadoEfectivo, resumenSuscripcion, pagoProvisional, ESTADOS };
