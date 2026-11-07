@@ -103,6 +103,11 @@ async function huella(pool) {
       delete f.last_login_at; delete f.updated_at; delete f.last_seen_at;
       /* Columna nueva de MF Plux (tipo de negocio): debe quedar vacía en los negocios existentes. Si tuviera un valor, la huella cambia. */
       if (f.business_type === null) delete f.business_type;
+      /* Columnas nuevas de pagos (Payphone): sin pagos deben quedar vacías o en 0. Con cualquier otro valor, la huella cambia. */
+      if (f.paid_plan === null) delete f.paid_plan;
+      if (f.paid_through === null) delete f.paid_through;
+      if (f.paid_seq === 0) delete f.paid_seq;
+      if (f.payments_acknowledged_seq === 0) delete f.payments_acknowledged_seq;
       return JSON.stringify(f, Object.keys(f).sort());
     }).sort();
     partes.push(t + ':' + crypto.createHash('sha256').update(filas.join('\n')).digest('hex'));
