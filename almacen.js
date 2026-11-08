@@ -473,6 +473,64 @@ MIGRACIONES.push({
   `
 });
 
+MIGRACIONES.push({
+  version: '2026-11-pagos-001',
+  descripcion: 'Pagos de suscripción con Payphone (pagos, bitácora y período pagado de cada negocio)',
+  sql: `
+    /*
+      Solo añade columnas y tablas nuevas: no modifica ni borra datos.
+      Las columnas nuevas de businesses empiezan vacías o en 0: ningún negocio
+      cambia de estado hasta que tenga un pago confirmado.
+    */
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS paid_plan TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS paid_through TIMESTAMPTZ;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS paid_seq BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS payments_acknowledged_seq BIGINT NOT NULL DEFAULT 0;
+
+    /* Sin datos de tarjeta: solo marca, tipo y últimos dígitos que devuelve Payphone. */
+    CREATE TABLE IF NOT EXISTS subscription_payments (
+      seq BIGSERIAL PRIMARY KEY,
+      business_id TEXT NOT NULL REFERENCES businesses(id),
+      client_transaction_id TEXT NOT NULL UNIQUE,
+      plan TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+      currency TEXT NOT NULL DEFAULT 'USD',
+      mode TEXT NOT NULL CHECK (mode IN ('pruebas', 'produccion')),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'superseded', 'approved', 'canceled', 'review', 'expired', 'error')),
+      payphone_transaction_id BIGINT UNIQUE,
+      authorization_code TEXT,
+      card_brand TEXT,
+      card_type TEXT,
+      card_last_digits TEXT CHECK (card_last_digits IS NULL OR card_last_digits ~ '^[0-9]{1,4}$'),
+      status_message TEXT,
+      period_start TIMESTAMPTZ,
+      period_end TIMESTAMPTZ,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      confirmed_at TIMESTAMPTZ,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at TIMESTAMPTZ,
+      last_error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS subscription_payments_negocio_idx ON subscription_payments (business_id, seq DESC);
+    CREATE INDEX IF NOT EXISTS subscription_payments_abiertos_idx ON subscription_payments (status)
+      WHERE status IN ('pending', 'superseded', 'error');
+
+    /* Bitácora para diagnóstico: cada paso de cada pago, sin datos de la tarjeta. */
+    CREATE TABLE IF NOT EXISTS subscription_payment_log (
+      id BIGSERIAL PRIMARY KEY,
+      payment_seq BIGINT,
+      business_id TEXT,
+      level TEXT NOT NULL CHECK (level IN ('info', 'error')),
+      event TEXT NOT NULL,
+      detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS subscription_payment_log_pago_idx ON subscription_payment_log (payment_seq, id);
+  `
+});
+
 const RESTRICCION_SOLAPES = 'booking_slots_sin_solapes';
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
 /* Tipos de negocio: comparten la misma aplicación, planes y funciones. */
