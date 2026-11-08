@@ -61,6 +61,9 @@ class ErrorPago extends Error {
   - PAYPHONE_CONFIRM_URL, PAYPHONE_CAJITA_JS, PAYPHONE_CAJITA_CSS: solo fuera de
     producción (pruebas automáticas con un Payphone simulado). En producción se
     usan siempre las direcciones oficiales.
+  - Un pago en modo «pruebas» NUNCA activa ni cambia una suscripción en el
+    servidor de producción: se confirma y se registra, nada más. Solo fuera de
+    producción, PAGOS_PRUEBAS_ACTIVAN=si deja que active (pruebas automáticas).
   Nota: el ambiente (PRUEBAS o PRODUCCIÓN) lo decide la aplicación creada en
   Payphone Developer, no esta variable. En «pruebas» deben usarse las
   credenciales de una aplicación en ambiente de PRUEBAS.
@@ -80,6 +83,9 @@ function leerConfiguracion(env = process.env, { produccion = false } = {}) {
     activo: true,
     modo,
     motivo: null,
+    /* Solo un cobro real activa suscripciones en producción. */
+    activaSuscripciones: modo === 'produccion' ||
+      (!produccion && String(env.PAGOS_PRUEBAS_ACTIVAN || '').trim().toLowerCase() === 'si'),
     token,
     storeId,
     confirmUrl: local('PAYPHONE_CONFIRM_URL', CONFIRM_OFICIAL),
@@ -118,6 +124,8 @@ function resumenPago(p) {
     card: p.card_brand || p.card_last_digits
       ? { brand: p.card_brand || null, type: p.card_type || null, lastDigits: p.card_last_digits || null }
       : null,
+    /* false: pago de prueba aprobado que no activa ni cambia la suscripción. */
+    activates: p.status === 'approved' ? Boolean(p.period_end) : null,
     periodStart: iso(p.period_start),
     periodEnd: iso(p.period_end),
     createdAt: iso(p.created_at),
@@ -146,6 +154,8 @@ function crearPagos({ pool, config, fetchImpl = fetch, registro = console, reloj
     return {
       enabled: disponible,
       mode: disponible ? config.modo : null,
+      /* false en producción con modo de pruebas: los pagos de prueba no activan suscripciones. */
+      activatesSubscriptions: disponible ? Boolean(config.activaSuscripciones) : false,
       /* Motivo legible cuando están desactivados (sin secretos). */
       reason: disponible ? null : (config && config.motivo) || 'Los pagos en línea están desactivados'
     };
@@ -311,7 +321,11 @@ function crearPagos({ pool, config, fetchImpl = fetch, registro = console, reloj
         last: datos && datos.lastDigits ? String(datos.lastDigits).replace(/\D/g, '').slice(-4) || null : null
       };
       let periodo = { inicio: null, fin: null };
-      if (resultado.estado === 'approved') {
+      const activa = resultado.estado === 'approved' && Boolean(config.activaSuscripciones);
+      if (resultado.estado === 'approved' && !activa) {
+        resultado = { ...resultado, mensaje: 'Pago de prueba: no activa ni cambia la suscripción' };
+      }
+      if (activa) {
         const b = (await client.query('SELECT * FROM businesses WHERE id = $1 FOR UPDATE', [pago.business_id])).rows[0];
         periodo = periodoDelPago(b, ahora);
         await client.query(
@@ -333,6 +347,8 @@ function crearPagos({ pool, config, fetchImpl = fetch, registro = console, reloj
           seq: Number(r.seq), clientTransactionId: r.client_transaction_id, transactionId: Number(r.payphone_transaction_id),
           authorizationCode: r.authorization_code, plan: r.plan, amountCents: r.amount_cents, currency: r.currency, mode: r.mode,
           status: r.status, message: r.status_message, cardBrand: r.card_brand, cardLastDigits: r.card_last_digits,
+          /* El Panel Maestro solo aplica a la suscripción los pagos con activates: true. */
+          activates: activa,
           periodStart: iso(r.period_start), periodEnd: iso(r.period_end), confirmedAt: iso(r.confirmed_at)
         })]);
       await bitacora(client, { seq: r.seq, negocio: r.business_id, nivel: resultado.estado === 'review' ? 'error' : 'info',

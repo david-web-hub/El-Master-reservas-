@@ -87,7 +87,9 @@
         $('precio').innerHTML = dinero(p.amount) + ' <small>USD</small>';
         mostrar('precio', true);
         mostrar('modo', p.mode === 'pruebas');
-        if (p.status === 'approved') {
+        if (p.status === 'approved' && p.activates === false) {
+          estado('Pago de prueba aprobado. No se cobró dinero real y tu suscripción no cambia.', 'ok');
+        } else if (p.status === 'approved') {
           estado('Pago aprobado. Tu plan ' + p.plan + ' está pagado hasta el ' + fecha(p.periodEnd) + '.', 'ok');
           if (p.card && p.card.lastDigits) $('detalle').textContent = (p.card.brand || 'Tarjeta') + ' terminada en ' + p.card.lastDigits;
         } else if (p.status === 'canceled') {

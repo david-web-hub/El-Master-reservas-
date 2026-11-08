@@ -8276,7 +8276,7 @@ function renderPlanes(data) {
       <p class="label">Barberos activos: ${lim.activeBarbers ?? 0}${lim.maxBarbers != null ? ' de ' + lim.maxBarbers : ' (sin límite)'}</p>
     </div>
     ${aviso}
-    ${pagos && data.payments.mode === 'pruebas' ? '<div class="card subscription-notice" id="pagosPruebas" style="margin:0 0 16px"><h3>Pagos en modo de pruebas</h3><p>Puedes probar el pago con tarjeta: no se realiza ningún cobro real.</p></div>' : ''}
+    ${pagos && data.payments.mode === 'pruebas' ? '<div class="card subscription-notice" id="pagosPruebas" style="margin:0 0 16px"><h3>Pagos en modo de pruebas</h3><p>Puedes probar el pago con tarjeta: no se realiza ningún cobro real' + (data.payments.activatesSubscriptions ? '' : ' y tu suscripción no cambia') + '.</p></div>' : ''}
     <div class="plans-grid">${tarjetas || '<div class="empty">No hay planes disponibles en este momento.</div>'}</div>
     <p class="label" style="margin-top:14px">Los cambios de plan los aprueba MF Plux. Ningún cambio borra tus barberos, reservas, clientes ni tu configuración.</p>`;
 }

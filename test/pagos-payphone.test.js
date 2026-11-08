@@ -123,6 +123,12 @@ test('configuración: desactivado por defecto y producción solo con autorizaci�
   assert.equal(desviado.cajitaJs, CAJITA_JS_OFICIAL);
   assert.equal(leerConfiguracion({ PAGOS_PAYPHONE: 'pruebas', PAYPHONE_TOKEN: 't', PAYPHONE_STORE_ID: 's',
     PAYPHONE_CONFIRM_URL: 'http://127.0.0.1:1/confirm' }).confirmUrl, 'http://127.0.0.1:1/confirm');
+  /* Un pago de prueba nunca activa una suscripción en producción, aunque se pida. */
+  const pruebasEnProduccion = { PAGOS_PAYPHONE: 'pruebas', PAYPHONE_TOKEN: 't', PAYPHONE_STORE_ID: 's', PAGOS_PRUEBAS_ACTIVAN: 'si' };
+  assert.equal(leerConfiguracion(pruebasEnProduccion, { produccion: true }).activaSuscripciones, false);
+  assert.equal(leerConfiguracion({ ...pruebasEnProduccion, PAGOS_PRUEBAS_ACTIVAN: '' }).activaSuscripciones, false);
+  assert.equal(leerConfiguracion(pruebasEnProduccion).activaSuscripciones, true, 'solo fuera de producción');
+  assert.equal(autorizado.activaSuscripciones, true, 'un cobro real sí activa');
 });
 
 test('un mes de suscripción: mismo día del mes siguiente, o el último día si no existe', () => {
@@ -175,7 +181,7 @@ async function eventosDe(s, negocio) {
 }
 
 test.describe('Pagos con Payphone simulado', { skip: omitir }, () => {
-  let s, apagado, pp, pool, basePayphone;
+  let s, apagado, sinActivar, pp, pool, basePayphone;
 
   test.before(async () => {
     pool = crearPool();
@@ -185,13 +191,20 @@ test.describe('Pagos con Payphone simulado', { skip: omitir }, () => {
       PLATAFORMA_CLAVE: CLAVE_PLATAFORMA,
       PAGOS_PAYPHONE: 'pruebas', PAYPHONE_TOKEN: TOKEN, PAYPHONE_STORE_ID: STORE,
       PAYPHONE_CONFIRM_URL: base + '/api/confirm', PAYPHONE_CAJITA_JS: base + '/cajita.js', PAYPHONE_CAJITA_CSS: base + '/cajita.css',
-      PAGOS_REVISION_MS: '300', PAGOS_REINTENTO_MS: '200'
+      PAGOS_REVISION_MS: '300', PAGOS_REINTENTO_MS: '200',
+      /* Solo fuera de producción: deja que los pagos de prueba activen suscripciones para probar ese flujo. */
+      PAGOS_PRUEBAS_ACTIVAN: 'si'
     } });
     assert.equal((await plataforma(s, 'PUT', '/api/plataforma/planes', { plans: CATALOGO })).status, 200);
     apagado = await iniciarServidor({ postgres: true, env: { PLATAFORMA_CLAVE: CLAVE_PLATAFORMA } });
+    /* Como en producción con credenciales de PRUEBAS: los pagos se confirman pero no activan nada. */
+    sinActivar = await iniciarServidor({ postgres: true, env: {
+      PLATAFORMA_CLAVE: CLAVE_PLATAFORMA, PAGOS_PAYPHONE: 'pruebas', PAYPHONE_TOKEN: TOKEN, PAYPHONE_STORE_ID: STORE,
+      PAYPHONE_CONFIRM_URL: base + '/api/confirm', PAYPHONE_CAJITA_JS: base + '/cajita.js', PAYPHONE_CAJITA_CSS: base + '/cajita.css'
+    } });
   });
   test.after(async () => {
-    for (const x of [s, apagado]) { if (x) { await x.detener(); x.borrar(); } }
+    for (const x of [s, apagado, sinActivar]) { if (x) { await x.detener(); x.borrar(); } }
     if (pp) await pp.cerrar();
     if (pool) await pool.end();
   });
@@ -201,7 +214,7 @@ test.describe('Pagos con Payphone simulado', { skip: omitir }, () => {
     assert.equal(r.status, 503);
     assert.equal(r.json.code, 'PAGOS_DESACTIVADOS');
     const planes = await apagado.pedir('GET', '/api/admin/planes');
-    assert.deepEqual(planes.json.payments, { enabled: false, mode: null, reason: 'Los pagos en línea están desactivados' });
+    assert.deepEqual(planes.json.payments, { enabled: false, mode: null, activatesSubscriptions: false, reason: 'Los pagos en línea están desactivados' });
   });
 
   test('checkout: monto del plan en centavos, identificador único y ningún dato de tarjeta', async () => {
@@ -232,7 +245,7 @@ test.describe('Pagos con Payphone simulado', { skip: omitir }, () => {
     const estados = (await pool.query('SELECT status FROM subscription_payments WHERE business_id = $1 ORDER BY seq', [b.id])).rows.map(r => r.status);
     assert.deepEqual(estados, ['superseded', 'superseded', 'pending']);
     const planes = await s.pedir('GET', '/api/admin/planes', undefined, { cookie: b.cookie });
-    assert.deepEqual(planes.json.payments, { enabled: true, mode: 'pruebas', reason: null });
+    assert.deepEqual(planes.json.payments, { enabled: true, mode: 'pruebas', activatesSubscriptions: true, reason: null });
   });
 
   test('pago aprobado: se confirma en el servidor y activa el plan después de la prueba gratuita', async () => {
@@ -274,6 +287,7 @@ test.describe('Pagos con Payphone simulado', { skip: omitir }, () => {
     assert.equal(evento.payload.periodEnd, p.periodEnd);
     assert.equal(evento.payload.mode, 'pruebas');
     assert.equal(evento.payload.cardLastDigits, '17');
+    assert.equal(evento.payload.activates, true);
     assert.ok(Number.isInteger(evento.payload.seq) && evento.payload.seq > 0);
   });
 
@@ -296,6 +310,28 @@ test.describe('Pagos con Payphone simulado', { skip: omitir }, () => {
     const ajeno = await respuesta(s, id + 999, ctx);
     assert.match(ajeno.headers.get('location'), /error=1/);
     assert.equal((await detalle(s, b, ctx)).status, 'approved');
+  });
+
+  test('modo de pruebas sin PAGOS_PRUEBAS_ACTIVAN (como en producción): el pago se confirma pero no activa nada', async () => {
+    const planes = await sinActivar.pedir('GET', '/api/admin/planes');
+    assert.deepEqual(planes.json.payments, { enabled: true, mode: 'pruebas', activatesSubscriptions: false, reason: null });
+    const b = await registrar(sinActivar, 'Individual');
+    const antes = await suscripcion(sinActivar, b);
+    const r = await iniciar(sinActivar, b, 'Business');
+    const ctx = r.json.box.clientTransactionId;
+    await respuesta(sinActivar, pp.pagar(ctx, r.json.box.amount), ctx);
+    const p = await detalle(sinActivar, b, ctx);
+    assert.equal(p.status, 'approved');
+    assert.equal(p.activates, false);
+    assert.equal(p.periodEnd, null);
+    assert.equal(p.message, 'Pago de prueba: no activa ni cambia la suscripción');
+    assert.deepEqual(await suscripcion(sinActivar, b), antes, 'la suscripción no cambia');
+    const fila = (await pool.query('SELECT paid_plan, paid_through, paid_seq FROM businesses WHERE id = $1', [b.id])).rows[0];
+    assert.deepEqual(fila, { paid_plan: null, paid_through: null, paid_seq: '0' });
+    const [evento] = await eventosDe(sinActivar, b.id);
+    assert.equal(evento.type, 'payment.approved');
+    assert.equal(evento.payload.activates, false, 'el Panel no lo aplicará');
+    assert.equal(evento.payload.mode, 'pruebas');
   });
 
   test('pago rechazado: no se cobra ni cambia la suscripción; se puede intentar de nuevo', async () => {

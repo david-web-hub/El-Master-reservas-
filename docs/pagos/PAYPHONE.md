@@ -62,6 +62,8 @@
 
 `PAYPHONE_CONFIRM_URL`, `PAYPHONE_CAJITA_JS` y `PAYPHONE_CAJITA_CSS` solo sirven para las pruebas automáticas. En producción (Render) se ignoran y se usan siempre las direcciones oficiales de Payphone.
 
+**Pagos de prueba en producción:** con `PAGOS_PAYPHONE=pruebas`, en el servidor de producción los pagos se confirman y quedan registrados, pero **nunca activan ni cambian una suscripción**. El evento llega al Panel con `activates: false` y el Panel tampoco lo aplica. Solo fuera de producción (pruebas automáticas), `PAGOS_PRUEBAS_ACTIVAN=si` deja que activen.
+
 > **Importante:** el ambiente lo decide la aplicación creada en Payphone Developer, no la variable `PAGOS_PAYPHONE`. Mientras `PAGOS_PAYPHONE=pruebas`, usa **solo** el Token y el StoreID de una aplicación configurada en ambiente de **PRUEBAS**.
 
 ## Para habilitar los pagos (no hecho; requiere tu autorización)
